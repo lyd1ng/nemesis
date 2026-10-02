@@ -9,8 +9,9 @@ import tomllib
 from typing import Self
 from pathlib import Path
 from collections.abc import Callable
+from platformdirs import user_data_path
 from dataclasses import dataclass, fields, replace
-from platformdirs import user_config_path, user_data_path
+from nemesis.constants import DEFAULT_GLOBAL_PATH, DEFAULT_LOCAL_PATH
 
 # This string to callable map is used to convert the string annotations
 # to constructors.
@@ -19,9 +20,6 @@ MAP: dict[str, Callable[[str], object]] = {
     "float": float,
     "pathlib.Path": Path,
 }
-
-DEFAULT_GLOBAL_PATH: Path = user_config_path("nemesis") / Path("nemesis.conf")
-DEFAULT_LOCAL_PATH: Path = user_config_path("./.nemesis/nemesis.conf")
 
 
 @dataclass(slots=True)
