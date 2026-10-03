@@ -35,6 +35,7 @@ class Config:
     timeout: float | None = None
     database_path: Path | None = None
     artifact_path: Path | None = None
+    experiment_description_path: Path | None = None
 
     def __mul__(self, other: Self) -> Self:
         """
@@ -74,6 +75,7 @@ class ConfigDefault(object):
             timeout=60.0,
             database_path=data_dir / Path("nemesis.db"),
             artifact_path=data_dir / Path("artifacts"),
+            experiment_description_path=data_dir / Path("experiment_descriptions"),
         )
         return self.config
 
