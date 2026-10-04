@@ -6,11 +6,11 @@ Author: Lyding Anrie Brumm.
 """
 
 import tomllib
-from typing import Self
+from typing import Self, cast
 from pathlib import Path
 from collections.abc import Callable
 from platformdirs import user_data_path
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields, replace, asdict
 from nemesis.constants import DEFAULT_GLOBAL_PATH, DEFAULT_LOCAL_PATH
 
 # This string to callable map is used to convert the string annotations
@@ -23,10 +23,11 @@ MAP: dict[str, Callable[[str], object]] = {
 
 
 @dataclass(slots=True)
-class Config:
+class PreConfig:
     """
-    The configuration full of nemesis.
-    Also implements logic for merging two configurations.
+    The pre-configuration of nemesis.
+    Also implements logic for merging two configurations, this
+    is why None is always given as an additional datatype.
     """
 
     # WARNING: Only use 'simple' type annotations
@@ -57,25 +58,59 @@ class Config:
         return replace(self, **parameters)
 
 
+@dataclass(slots=True)
+class Config:
+    """
+    The full configuration of nemesis, without None
+    as an additional datatype, because every field has to be set.
+    """
+
+    author: str
+    timeout: float
+    database_path: Path
+    artifact_path: Path
+    experiment_description_path: Path
+
+    @classmethod
+    def from_preconfig(cls, preconfig: PreConfig) -> Self:
+        assert (
+            preconfig.author is not None
+            or preconfig.timeout is not None
+            or preconfig.database_path is not None
+            or preconfig.artifact_path is not None
+            or preconfig.experiment_description_path is not None
+        ), "Can not build config from partially set preconfig"
+        return cls(
+            author=cast(str, preconfig.author),
+            timeout=cast(float, preconfig.timeout),
+            database_path=cast(Path, preconfig.database_path),
+            artifact_path=cast(Path, preconfig.artifact_path),
+            experiment_description_path=cast(
+                Path, preconfig.experiment_description_path
+            ),
+        )
+
+
 class ConfigDefault(object):
     """
     The default configurations for Nemesis
     """
 
     def __init__(self):
-        self.config: Config = Config()
+        self.config: PreConfig = PreConfig()
 
     def parse(self):
         """
         Generate an instance of 'Config' using default settings.
         """
         data_dir = user_data_path("nemesis")
-        self.config = Config(
+        self.config = PreConfig(
             author="Unknown",
             timeout=60.0,
             database_path=data_dir / Path("nemesis.db"),
             artifact_path=data_dir / Path("artifacts"),
-            experiment_description_path=data_dir / Path("experiment_descriptions"),
+            experiment_description_path=data_dir
+            / Path("experiment_descriptions"),
         )
         return self.config
 
@@ -88,7 +123,7 @@ class ConfigFileReader(object):
 
     def __init__(self, path: Path):
         self.path: Path = path
-        self.config: Config = Config()
+        self.config: PreConfig = PreConfig()
 
     def parse(self):
         """
@@ -97,11 +132,11 @@ class ConfigFileReader(object):
         This way it can be merged without affecting the resulting
         configuration.
         """
-        config = Config()
+        config = PreConfig()
         try:
             fd = open(self.path, "rb")
         except FileNotFoundError:
-            self.config = Config()
+            self.config = PreConfig()
             return self.config
         # Load the toml file and use the type annotations which are part
         # of pythons reflection system to convert the parsed strings
@@ -138,13 +173,13 @@ class ConfigStringReader(object):
 
     def __init__(self, string: str):
         self.string: str = string
-        self.config: Config = Config()
+        self.config: PreConfig = PreConfig()
 
     def parse(self):
         """
         Parse configuration string.
         """
-        config = Config()
+        config = PreConfig()
         # Take the toml string file and use the type annotations which are part
         # of pythons reflection system to convert the parsed strings
         # to the correct datatype.
@@ -177,7 +212,7 @@ def read_config(cli_arguments: str = "") -> Config:
     is read as:
         global config -> local config -> cli parameter
     """
-    return (
+    return Config.from_preconfig(
         ConfigDefault().parse()
         * ConfigFileReader(DEFAULT_GLOBAL_PATH).parse()
         * ConfigFileReader(DEFAULT_LOCAL_PATH).parse()

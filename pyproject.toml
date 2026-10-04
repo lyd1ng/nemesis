@@ -18,3 +18,9 @@ dev = [
 
 [project.scripts]
 nemesis = "nemesis.main:main"
+
+[tool.basedpyright]
+reportAny = "none"
+
+[tool.pyink]
+line-length = 80

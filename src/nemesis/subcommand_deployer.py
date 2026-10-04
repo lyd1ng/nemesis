@@ -9,39 +9,68 @@ Author: Lyding Anrie Brumm.
 """
 
 from nemesis.config import Config
+from nemesis.repository import Repository
 from nemesis.basic_subcommands import initialise_nemesis_directory
-from nemesis.experiment_command import experiment_register
+import nemesis.experiment_command as ec
+
+import argparse
 from pathlib import Path
-from typing import cast
-from collections.abc import Callable
 
-
-def pai_init(args: list[str], config: Config) -> None:
+'''
+def pai_init(args: list[str], config: Config, repository: Repository) -> None:
     """
     Parse and invoke the initialise_nemesis_directory command.
     """
     initialise_nemesis_directory()
+'''
 
 
-def pai_experiment(args: list[str], config: Config) -> None:
+def handle_experiment_register(
+    args: argparse.Namespace, config: Config, repository: Repository
+):
     """
-    Parse and invoke the experiment command.
+    Handle the experiment register command
     """
-    # WARNING: STUPID AD HOC IMPLEMENTATION
-    sub_commands = {"register": experiment_register}
-    sub_commands[args[2]](Path(args[3]), cast(Path, config.experiment_description_path))
+    _ = ec.experiment_register(
+        args.file, config.experiment_description_path, repository
+    )
 
 
-SUBCOMMAND_DEPLOYER: dict[str, Callable[[list[str], Config], None]] = {
-    "init": pai_init,
-    "experiment": pai_experiment,
-}
+def handle_experiment_show(
+    args: argparse.Namespace, config: Config, repository: Repository
+):
+    """
+    Hanlde the experiment show command
+    """
+    _ = ec.experiment_show(args.name, repository)
 
 
-def invoke_subcommand(args: list[str], config: Config) -> None:
+def handle_experiment_list(
+    args: argparse.Namespace, config: Config, repository: Repository
+):
+    """
+    Hanlde the experiment list command
+    """
+    _ = ec.experiment_list(repository)
+
+
+def invoke_subcommand(config: Config, repository: Repository) -> None:
     """
     Calls the parse and invoke layer for a given subcommand.
     This way the command line interface arguments are parsed according
     to the parameter list of the subcommand and the subcommand is invoked.
     """
-    SUBCOMMAND_DEPLOYER[args[1]](args, config)
+    parser = argparse.ArgumentParser(prog="nemesis")
+    commands = parser.add_subparsers(dest="command", required=True)
+    experiment = commands.add_parser("experiment")
+    experiment_command = experiment.add_subparsers(dest="experiment_command")
+    experiment_register = experiment_command.add_parser("register")
+    _ = experiment_register.add_argument("file", type=Path)
+    experiment_register.set_defaults(handler=handle_experiment_register)
+    experiment_show = experiment_command.add_parser("show")
+    _ = experiment_show.add_argument("name", type=str)
+    experiment_show.set_defaults(handler=handle_experiment_show)
+    experiment_list = experiment_command.add_parser("list")
+    experiment_list.set_defaults(handler=handle_experiment_list)
+    args = parser.parse_args()
+    args.handler(args, config, repository)

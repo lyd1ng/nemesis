@@ -1,12 +1,13 @@
-from sys import argv
+from nemesis.repository import Repository
 from nemesis.config import Config, read_config
 from nemesis.subcommand_deployer import invoke_subcommand
 
 
 def main():
-    pass
     config: Config = read_config()
+    repository = Repository(config.database_path)
+    print(config)
     try:
-        invoke_subcommand(argv, config)
+        invoke_subcommand(config, repository)
     except KeyError:
-        print(argv[1], "not known subcommand")
+        print("FOO")
