@@ -39,9 +39,7 @@ class Repository(object):
             raise RuntimeError("Can not create expreiment description")
         return cursor.lastrowid
 
-    def get_experiment_description(
-        self, name: str
-    ) -> ExperimentDescription | None:
+    def get_experiment_description(self, name: str) -> ExperimentDescription:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -52,7 +50,9 @@ class Repository(object):
             )
             row = cursor.fetchone()
             if row is None:
-                return None
+                raise RuntimeError(
+                    "Experiment description could not be fetched"
+                )
             return ExperimentDescription(
                 name=str(row[0]),
                 path=Path(row[1]),

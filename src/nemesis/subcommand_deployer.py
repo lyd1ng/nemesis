@@ -54,6 +54,19 @@ def handle_experiment_list(
     _ = ec.experiment_list(repository)
 
 
+def handle_experiment_run(
+    args: argparse.Namespace,
+    config: Config,
+    repository: Repository,
+):
+    """
+    Handle the experiment run command
+    """
+    _ = ec.experiment_run(
+        args.name, args.params, config.experiment_description_path, repository
+    )
+
+
 def invoke_subcommand(config: Config, repository: Repository) -> None:
     """
     Calls the parse and invoke layer for a given subcommand.
@@ -72,5 +85,9 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     experiment_show.set_defaults(handler=handle_experiment_show)
     experiment_list = experiment_command.add_parser("list")
     experiment_list.set_defaults(handler=handle_experiment_list)
+    experiment_run = experiment_command.add_parser("run")
+    _ = experiment_run.add_argument("name", type=str)
+    _ = experiment_run.add_argument("params", type=list[str], nargs="*")
+    experiment_run.set_defaults(handler=handle_experiment_run)
     args = parser.parse_args()
     args.handler(args, config, repository)
