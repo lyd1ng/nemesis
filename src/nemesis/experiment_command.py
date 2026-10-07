@@ -7,20 +7,15 @@ Author: Lyding Anrie Brumm.
 
 from nemesis.constants import VERSION
 from nemesis.repository import Repository
-from nemesis.domain import ExperimentDescription, ExperimentModule
+from nemesis.utility import calculate_hash
+from nemesis.domain import ExperimentDescription
+from nemesis.experiment_module import ExperimentModule
+from nemesis.experiment_context import ExperimentContext
 
 import importlib.util
 from typing import cast
 from pathlib import Path
-from hashlib import sha256
 from subprocess import run as invoke
-
-
-def _calculate_hash(path: Path) -> str:
-    """
-    Calculate the hash of a python file
-    """
-    return sha256(path.read_bytes()).hexdigest()
 
 
 def _load_experiment_module(path: Path) -> tuple[ExperimentModule, str]:
@@ -37,7 +32,7 @@ def _load_experiment_module(path: Path) -> tuple[ExperimentModule, str]:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     em = cast(ExperimentModule, module.experiment_module)
-    return em, _calculate_hash(path)
+    return em, calculate_hash(path)
 
 
 def _load_experiment_description(path: Path) -> ExperimentDescription:
@@ -48,7 +43,7 @@ def _load_experiment_description(path: Path) -> ExperimentDescription:
     em, _hash = _load_experiment_module(path)
     name = em.name
     return ExperimentDescription(
-        name=name, path=path, hash=_hash, api_version=VERSION
+        type=name, path=path, hash=_hash, api_version=VERSION
     )
 
 
@@ -63,17 +58,17 @@ def experiment_register(
         [
             "cp",
             str(path),
-            str(experiment_description_path / Path(ed.name + ".py")),
+            str(experiment_description_path / Path(ed.type + ".py")),
         ]
     )
     return rep.add_experiment_description(ed)
 
 
-def experiment_show(name: str, rep: Repository) -> int:
+def experiment_show(type: str, rep: Repository) -> int:
     """
     Show an experiment description.
     """
-    ed = rep.get_experiment_description(name)
+    ed = rep.get_experiment_description(type)
     print(str(ed))
     return 0
 
@@ -87,7 +82,8 @@ def experiment_list(rep: Repository) -> int:
 
 
 def experiment_run(
-    name: str,
+    type: str,
+    description: str,
     params: list[str],
     experiment_description_path: Path,
     rep: Repository,
@@ -98,15 +94,19 @@ def experiment_run(
     # First the experiment module has to be retrieved and the hashes
     # have to be compared. This way it can be detected if the source file
     # was tempered with post-registration
-    ed = rep.get_experiment_description(name)
+    ed = rep.get_experiment_description(type)
     em, _hash = _load_experiment_module(
         experiment_description_path / Path(ed.path)
     )
     if ed.hash != _hash:
         raise RuntimeError("Detected post-registration tempering")
+    # The whole API is defined within the ExperimentContext,
+    ec = ExperimentContext(rep, type, params, em.parameters)
+    ec.init_experiment(description)
     # For all the logic happens in the module and here simply
     # all three hooks are invoked
     em.pre_conduct(em)
-    experiment = em.conduct(params)
-    experiment_result = em.post_conduct(experiment)
+    em.conduct(ec)
+    ec.wait_for_experiment()
+    em.post_conduct(ec)
     return 0
