@@ -11,7 +11,7 @@ from nemesis.utility import (calculate_hash, get_git_commit)
 
 import time
 import subprocess
-from typing import cast
+from typing import TypedDict, Unpack, TextIO
 from pathlib import Path
 from functools import reduce
 from argparse import ArgumentParser, Namespace
@@ -21,6 +21,15 @@ from concurrent.futures import (
     wait,
     FIRST_COMPLETED,
 )
+
+
+class RunOptions(TypedDict, total=False):
+    """
+    Additional options passed from add_run to subprocess.open
+    """
+
+    stdout: TextIO
+    stderr: TextIO
 
 
 class ExperimentContext(object):
@@ -42,7 +51,7 @@ class ExperimentContext(object):
         # Just a dummy variable because None leads to static typo issues
         self.experiment: Experiment = Experiment("", 0, 0, "", "", "INIT")
         self.runs: list[Run] = []
-        self.run_ids_modifier_dict: dict[int, dict[str, object]] = {}
+        self.run_ids_modifier_dict: dict[int, RunOptions] = {}
 
     def init_experiment(self, description: str):
         """
@@ -65,7 +74,7 @@ class ExperimentContext(object):
         params: list[str],
         dependencies: list[int],
         outputs: list[str],
-        **kwargs: object,
+        **kwargs: Unpack[RunOptions],
     ) -> int:
         """
         Add a run to the current experiment
@@ -147,8 +156,7 @@ class ExperimentContext(object):
                     filter(lambda x: x.status == "INIT", self.runs)
                 )
                 for r in init_runs:
-                    invocation = str(r.executable) + " "
-                    invocation += r.params
+                    invocation = self._get_invocation(r)
                     r.start_time = time.time()
                     r.invocation = invocation
                     r.status = "RUNNING"
@@ -257,3 +265,17 @@ class ExperimentContext(object):
             else:
                 success = False
         return success
+
+    def _get_invocation(self, run: Run):
+        """
+        Get the correct invocation including redirect symbols
+        """
+        suffix = ""
+        options = self.run_ids_modifier_dict[self.runs.index(run)]
+        if "stdout" in options:
+            suffix += f" > {options['stdout'].name}"
+        if "stderr" in options:
+            suffix += f" 2> {options['stderr'].name}"
+        invocation = str(run.executable) + " "
+        invocation += run.params
+        return invocation + suffix
