@@ -6,7 +6,7 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
-from nemesis.domain import (ExperimentDescription, Experiment, Run)
+from nemesis.domain import (ExperimentDescription, Experiment, Run, RunArtifact)
 from pathlib import Path
 import sqlite3
 
@@ -138,10 +138,11 @@ class Repository(object):
                 runs.append(self.get_run(run_id[0]))
         return runs
 
-    def add_run(self, run: Run):
+    def add_run(self, run: Run) -> int:
         """
         Add a run object to an experiment
         """
+        run_id = None
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -164,9 +165,12 @@ class Repository(object):
                     run.invocation,
                 ),
             )
-        if cursor.lastrowid is None:
-            raise RuntimeError("Can not create expreiment description")
-        return cursor.lastrowid
+            run_id = cursor.lastrowid
+            if run_id is None:
+                raise RuntimeError("Can not add run")
+            for artifact in run.artifacts:
+                artifact.id = self.__add_run_artifact(connection, artifact)
+        return run_id
 
     def get_run(self, run_id: int) -> Run:
         """
@@ -230,6 +234,8 @@ class Repository(object):
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Can not update experiment")
+            for artifact in run.artifacts:
+                self.__update_run_artifact(connection, artifact)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
@@ -269,7 +275,7 @@ class Repository(object):
             cursor = connection.execute("""
                 CREATE TABLE IF NOT EXISTS runs (
                     id                  INTEGER PRIMARY KEY,
-                    eid                 INTEGER,
+                    eid                 INTEGER NOT NULL,
                     end_time            FLOAT,
                     start_time          FLOAT,
                     description         TEXT NOT NULL,
@@ -279,10 +285,64 @@ class Repository(object):
                     params              TEXT,
                     exit_code           INTEGER,
                     invocation          TEXT,
-                    status      TEXT NOT NULL CHECK (status in ('INIT', 'WAITING', 'RUNNING', 'FAILED', 'SUCCESS'))
+                    status      TEXT NOT NULL CHECK (status in ('INIT', 'WAITING', 'RUNNING', 'FAILED', 'SUCCESS', 'BLOCKED')),
+                    FOREIGN KEY (eid) REFERENCES experiments(id)
                 )
                 """)
             if cursor.lastrowid is None:
                 raise RuntimeError(
                     "Can not create experiment description table"
                 )
+            cursor = connection.execute("""
+                CREATE TABLE IF NOT EXISTS run_artifacts (
+                    id      INTEGER PRIMARY KEY,
+                    rid     INTEGER NOT NULL,
+                    path    TEXT NOT NULL,
+                    hash    TEXT NOT NULL,
+                    FOREIGN KEY (rid) REFERENCES runs(id)
+                )
+                """)
+            if cursor.lastrowid is None:
+                raise RuntimeError(
+                    "Can not create experiment description table"
+                )
+
+    def __add_run_artifact(
+        self, connection: sqlite3.Connection, a: RunArtifact
+    ):
+        """
+        Add a run artifact
+        """
+        cursor = connection.execute(
+            """
+            INSERT INTO run_artifacts 
+                (rid, path, hash)
+            VALUES
+                (?, ?, ?)
+            """,
+            (a.rid, a.path, a.hash),
+        )
+        if cursor.lastrowid is None:
+            raise RuntimeError("Can not add run artifact")
+        return cursor.lastrowid
+
+    def __update_run_artifact(
+        self, connection: sqlite3.Connection, a: RunArtifact
+    ):
+        """
+        Update run artifact
+        """
+        cursor = connection.execute(
+            """
+            INSERT INTO run_artifacts (id, rid, path, hash)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                rid  = excluded.rid,
+                path = excluded.path,
+                hash = excluded.hash
+            """,
+            (a.id, a.rid, str(a.path), a.hash),
+        )
+        if cursor.rowcount != 1:
+            print(a)
+            raise RuntimeError("Can not insert/update run artifact")

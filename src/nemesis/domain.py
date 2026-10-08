@@ -56,6 +56,18 @@ class ExperimentDescription(object):
 
 
 @dataclass
+class RunArtifact:
+    """
+    The python representation of an artifact of a run
+    """
+
+    id: int
+    rid: int
+    path: Path
+    hash: str
+
+
+@dataclass
 class Run:
     """
     The python representation of a run within a numerical experiment.
@@ -81,15 +93,4 @@ class Run:
         | Literal["SUCCESS"]
     ) = "INIT"
     dependencies: list[int] = field(default_factory=list)
-
-
-@dataclass
-class RunArtifact:
-    """
-    The python representation of an artifact of a run
-    """
-
-    id: int
-    run_id: int
-    path: Path
-    hash: str
+    artifacts: list[RunArtifact] = field(default_factory=list)
