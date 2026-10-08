@@ -11,9 +11,16 @@ from nemesis.utility import (calculate_hash, get_git_commit)
 
 import time
 import subprocess
+from typing import cast
 from pathlib import Path
 from functools import reduce
 from argparse import ArgumentParser, Namespace
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    Future,
+    wait,
+    FIRST_COMPLETED,
+)
 
 
 class ExperimentContext(object):
@@ -51,7 +58,11 @@ class ExperimentContext(object):
         self.experiment = experiment
 
     def add_run(
-        self, description: str, executable: Path, params: list[str]
+        self,
+        description: str,
+        executable: Path,
+        params: list[str],
+        dependencies: list[int],
     ) -> int:
         """
         Add a run to the current experiment
@@ -61,6 +72,7 @@ class ExperimentContext(object):
             raise RuntimeError(
                 "Can not add run to partially initialised experiment"
             )
+        status = "INIT" if len(dependencies) == 0 else "WAITING"
         run: Run = Run(
             -1,
             self.experiment.id,
@@ -73,56 +85,90 @@ class ExperimentContext(object):
             executable,
             calculate_hash(executable),
             get_git_commit(executable),
-            "INIT",
+            status,
+            dependencies,
         )
         run.id = self._rep.add_run(run)
         self.runs.append(run)
         return len(self.runs) - 1
 
-    def queue_run(self, run_index: int):
+    def update_status(self):
         """
-        Queue a run
+        Update which jobs are waiting
         """
-        if self.experiment.id is None:
-            raise RuntimeError(
-                "Can not queue a run to partially initialised experiment"
-            )
-        run: Run = self.runs[run_index]
-        if run.status != "INIT":
-            raise RuntimeError("Can not queue run; status is not INIT")
-        run.status = "WAITING"
-        self._rep.update_run(run)
-        for dependency in run.dependencies:
-            # Dependencies are not used, yet
-            pass
-        self._invoke(run)
+        waiting_runs = list(filter(lambda x: x.status == "WAITING", self.runs))
+        for i, run in enumerate(waiting_runs):
+            if all(self.runs[j].status == "SUCCESS" for j in run.dependencies):
+                run.status = "INIT"
+            elif (
+                len(
+                    list(
+                        filter(
+                            lambda x: self.runs[x].status == "FAILED",
+                            run.dependencies,
+                        )
+                    )
+                )
+                > 0
+            ):
+                run.status = "BLOCKED"
+                self._propagate_blocked_status(i)
+            else:
+                pass
 
-    def wait_for_experiment(self):
+    def conduct(self):
         """
-        Wait for the experiment to stop
+        Conduct the experiment
         """
 
-        # First of all wait for all runs to finish
-        runs: list[Run] = []
-        experiment_is_finished = False
-        experiment_was_succesfull = True
-        while not experiment_is_finished:
-            experiment_is_finished = True
-            runs = self._rep.experiment_list_runs(self.experiment)
-            for run in runs:
-                if run.status == "RUNNING" or run.status == "INIT":
-                    experiment_is_finished = False
-            time.sleep(self.polling)
-        self.experiment.end_time = time.time()
+        with ThreadPoolExecutor() as executor:
+            active: dict[Future[int], Run] = {}
+            while True:
+                # Schedule all currently ready runs.
+                init_runs = list(
+                    filter(lambda x: x.status == "INIT", self.runs)
+                )
+                for r in init_runs:
+                    invocation = str(r.executable) + " "
+                    invocation += r.params
+                    r.start_time = time.time()
+                    r.invocation = invocation
+                    r.status = "RUNNING"
+                    self._rep.update_run(r)
+                    active[
+                        executor.submit(self._invoke, self.runs.index(r))
+                    ] = r
 
-        # Now after the experiment has finished,
-        # check if it finished succesfully or not
-        runs = self._rep.experiment_list_runs(self.experiment)
-        for run in runs:
-            if run.status != "SUCCESS":
-                experiment_was_succesfull = False
+                # Wait for one or more runs to finish.
+                done, _ = wait(
+                    active,
+                    return_when=FIRST_COMPLETED,
+                )
+
+                for future in done:
+                    result = future.result()
+                    r = active.pop(future)
+                    r.exit_code = result
+                    r.end_time = time.time()
+                    r.status = "SUCCESS" if r.exit_code == 0 else "FAILED"
+                    self._rep.update_run(r)
+                self.update_status()
+                if (
+                    len(
+                        list(
+                            filter(
+                                lambda x: x.status in ["INIT", "WAITING"],
+                                self.runs,
+                            )
+                        )
+                    )
+                    == 0
+                ):
+                    break
         self.experiment.status = (
-            "SUCCESS" if experiment_was_succesfull else "FAILED"
+            "SUCCESS"
+            if all(run.status == "SUCCESS" for run in self.runs)
+            else "FAILED"
         )
         self._rep.update_experiment(self.experiment)
 
@@ -157,26 +203,28 @@ class ExperimentContext(object):
         )
         for key, value in self._param_types.items():
             _ = parser.add_argument(key, type=value)
-        print(self._param_strs)
         return parser.parse_args(self._param_strs)
 
-    def _invoke(self, run: Run):
+    def _invoke(self, run_id: int) -> int:
         """
         Sets the start_time, add the invocation string and invoke the run
         """
-        invocation = str(run.executable) + " "
-        invocation += run.params
-        run.start_time = time.time()
-        run.invocation = invocation
-        run.status = "RUNNING"
-        self._rep.update_run(run)
         result = subprocess.run(
             [
-                str(run.executable),
-                run.params,
+                str(self.runs[run_id].executable),
+                self.runs[run_id].params,
             ],
         )
-        run.end_time = time.time()
-        run.exit_code = result.returncode
-        run.status = "SUCCESS" if run.exit_code == 0 else "FAILED"
-        self._rep.update_run(run)
+        return result.returncode
+
+    def _propagate_blocked_status(self, run_id: int):
+        """
+        If a run is set to BLOCKED all other jobs which depend on
+        that run BLOCKED run must be set to BLOCKED as well.
+        """
+        nodes = [run_id]
+        while len(nodes) > 0:
+            for i in range(len(nodes)):
+                self.runs[nodes[i]].status = "BLOCKED"
+                nodes += self.runs[nodes[i]].dependencies
+                _ = nodes.pop(i)

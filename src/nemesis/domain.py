@@ -75,6 +75,7 @@ class Run:
     status: (
         Literal["INIT"]
         | Literal["WAITING"]
+        | Literal["BLOCKED"]
         | Literal["RUNNING"]
         | Literal["FAILED"]
         | Literal["SUCCESS"]

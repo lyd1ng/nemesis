@@ -105,8 +105,6 @@ def experiment_run(
     ec.init_experiment(description)
     # For all the logic happens in the module and here simply
     # all three hooks are invoked
-    em.pre_conduct(em)
-    em.conduct(ec)
-    ec.wait_for_experiment()
-    em.post_conduct(ec)
+    em.setup(ec)
+    ec.conduct()
     return 0
