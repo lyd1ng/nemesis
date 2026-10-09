@@ -5,10 +5,12 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
+from nemesis.constants import DEFAULT_LOCAL_PATH
+from nemesis.repository import Repository
+
 from os import getcwd
 from pathlib import Path
 from subprocess import run as invoke
-from nemesis.constants import DEFAULT_LOCAL_PATH
 
 
 def initialise_nemesis_directory():
@@ -23,3 +25,18 @@ def initialise_nemesis_directory():
     result.check_returncode()
     result = invoke(["touch", str(Path(getcwd()) / DEFAULT_LOCAL_PATH)])
     result.check_returncode()
+
+
+def register_directory(
+    path: Path, dir_type: str, force: bool, repository: Repository
+):
+    """
+    Register a new directory in the nemesis db if it not already registered
+    and only if is empty.
+    """
+    if repository.get_wid_from_path(path) is not None:
+        raise RuntimeError("Can not register already registered directory")
+
+    if any(path.iterdir()) and not force:
+        raise RuntimeError("Can not register non-empty directory")
+    _ = repository.add_working_directory(path, dir_type)

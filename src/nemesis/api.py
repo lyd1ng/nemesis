@@ -50,19 +50,23 @@ class Api(object):
     def __init__(
         self,
         repository: Repository,
+        wid: int,
         exp_type: str,
         params: list[str],
         parameter_types: dict[str, type],
         polling: float = 1.0,
     ):
         self._rep: Repository = repository
+        self._wid: int = wid
         self._exp_type: str = exp_type
         self._param_strs: list[str] = params
         self._param_types: dict[str, type] = parameter_types
         self.polling: float = polling
         self.params: Namespace = self._parse()
         # Just a dummy variable because None leads to static typo issues
-        self.experiment: Experiment = Experiment(None, "", 0, 0, "", "", "INIT")
+        self.experiment: Experiment = Experiment(
+            None, self._wid, "", 0, 0, "", "", "INIT"
+        )
         self.runs: list[Run] = []
         self.result_run_data: list[ResultData] = []
         self.run_ids_modifier_dict: dict[int, RunOptions] = {}
@@ -286,6 +290,7 @@ class Api(object):
         """
         experiment: Experiment = Experiment(
             None,
+            self._wid,
             self._exp_type,
             0,
             time.time(),

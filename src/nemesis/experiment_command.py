@@ -61,7 +61,7 @@ def experiment_register(
             str(experiment_description_path / Path(ed.type + ".py")),
         ]
     )
-    return rep.add_experiment_description(ed)
+    return rep.add_experiment_template(ed)
 
 
 def experiment_show(type: str, rep: Repository) -> int:
@@ -82,12 +82,13 @@ def experiment_list(rep: Repository) -> int:
 
 
 def experiment_run(
+    wid: int,
     type: str,
     description: str,
     params: list[str],
     experiment_description_path: Path,
     rep: Repository,
-) -> int:
+):
     """
     Run a registered experiment
     """
@@ -101,11 +102,10 @@ def experiment_run(
     if ed.hash != _hash:
         raise RuntimeError("Detected post-registration tempering")
     # The whole API is defined within the ExperimentContext,
-    ec = Api(rep, type, params, em.parameters)
-    ec._init_experiment(description)
+    ec = Api(rep, wid, type, params, em.parameters)
+    ec._init_experiment(description)  # pyright: ignore[reportPrivateUsage]
     # For all the logic happens in the module and here simply
     # all three hooks are invoked
     em.setup(ec)
-    ec._conduct()
-    ec._postconduct()
-    return 0
+    ec._conduct()  # pyright: ignore[reportPrivateUsage]
+    ec._postconduct()  # pyright: ignore[reportPrivateUsage]

@@ -14,6 +14,7 @@ from nemesis.domain import (
     RunArtifact,
 )
 from pathlib import Path
+from typing import cast
 import sqlite3
 
 
@@ -29,11 +30,11 @@ class Repository(object):
         self.db_path: Path = db_path
         self._initialize()
 
-    def add_experiment_description(self, ed: ExperimentTemplate):
+    def add_experiment_template(self, ed: ExperimentTemplate):
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO experiment_descriptions
+                INSERT INTO experiment_templates
                     (name, path, hash, api_version)
                 VALUES
                     (?, ?, ?, ?)
@@ -41,23 +42,21 @@ class Repository(object):
                 (ed.type, ed.type + ".py", ed.hash, ed.api_version),
             )
         if cursor.lastrowid is None:
-            raise RuntimeError("Can not create expreiment description")
+            raise RuntimeError("Can not create experiment template")
         return cursor.lastrowid
 
     def get_experiment_description(self, name: str) -> ExperimentTemplate:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                SELECT name, path, hash, api_version FROM experiment_descriptions WHERE
+                SELECT name, path, hash, api_version FROM experiment_templates WHERE
                     name=?
                 """,
                 (name,),
             )
             row = cursor.fetchone()
             if row is None:
-                raise RuntimeError(
-                    "Experiment description could not be fetched"
-                )
+                raise RuntimeError("Experiment template could not be fetched")
             return ExperimentTemplate(
                 type=str(row[0]),
                 path=Path(row[1]),
@@ -73,10 +72,11 @@ class Repository(object):
             cursor = connection.execute(
                 """
                 INSERT INTO experiments
-                    (id, type, start_time, end_time, description, params, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (id, wid, type, start_time, end_time, description, params, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     type = excluded.type,
+                    wid = excluded.wid,
                     start_time = excluded.start_time,
                     end_time = excluded.end_time,
                     description = excluded.description,
@@ -86,6 +86,7 @@ class Repository(object):
             """,
                 (
                     ex.id,
+                    ex.wid,
                     ex.type,
                     ex.start_time,
                     ex.end_time,
@@ -212,6 +213,40 @@ class Repository(object):
         )
         return run
 
+    def add_working_directory(self, path: Path, dir_type: str):
+        """
+        Add a new working directory to the db
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO working_directories 
+                    (path, type)
+                VALUES
+                    (?, ?)
+                """,
+                (str(path), dir_type),
+            )
+        if cursor.lastrowid is None:
+            raise RuntimeError("Can add working directory")
+        return cursor.lastrowid
+
+    def get_wid_from_path(self, path: Path) -> int | None:
+        """
+        Get the wid of a path or None if it not yet registered
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+            SELECT id from working_directories WHERE path=?
+            """,
+                (str(path),),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+        return cast(int, row[0])
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
         _ = connection.execute("PRAGMA foreign_keys = ON")
@@ -220,7 +255,7 @@ class Repository(object):
     def _initialize(self) -> None:
         with self._connect() as connection:
             cursor = connection.execute("""
-                CREATE TABLE IF NOT EXISTS experiment_descriptions (
+                CREATE TABLE IF NOT EXISTS experiment_templates (
                     id          INTEGER PRIMARY KEY,
                     name        TEXT NOT NULL UNIQUE,
                     path        TEXT NOT NULL,
@@ -229,25 +264,23 @@ class Repository(object):
                 )
                 """)
             if cursor.lastrowid is None:
-                raise RuntimeError(
-                    "Can not create experiment description table"
-                )
+                raise RuntimeError("Can not create experiment templates table")
             cursor = connection.execute("""
                 CREATE TABLE IF NOT EXISTS experiments (
                     id          INTEGER PRIMARY KEY,
+                    wid         INTEGER,
                     type TEXT NOT NULL,
                     end_time    FLOAT,
                     start_time  FLOAT,
                     description TEXT,
                     params      TEXT,
                     mark        TEXT,
-                    status      TEXT NOT NULL CHECK (status in ('INIT', 'RUNNING', 'FAILED', 'SUCCESS'))
+                    status      TEXT NOT NULL CHECK (status in ('INIT', 'RUNNING', 'FAILED', 'SUCCESS')),
+                    FOREIGN KEY (wid) REFERENCES working_directories(id)
                 )
                 """)
             if cursor.lastrowid is None:
-                raise RuntimeError(
-                    "Can not create experiment description table"
-                )
+                raise RuntimeError("Can not create experiments table")
             cursor = connection.execute("""
                 CREATE TABLE IF NOT EXISTS runs (
                     id                  INTEGER PRIMARY KEY,
@@ -266,9 +299,7 @@ class Repository(object):
                 )
                 """)
             if cursor.lastrowid is None:
-                raise RuntimeError(
-                    "Can not create experiment description table"
-                )
+                raise RuntimeError("Can not create runs table")
             cursor = connection.execute("""
                 CREATE TABLE IF NOT EXISTS run_artifacts (
                     id      INTEGER PRIMARY KEY,
@@ -279,9 +310,7 @@ class Repository(object):
                 )
                 """)
             if cursor.lastrowid is None:
-                raise RuntimeError(
-                    "Can not create experiment description table"
-                )
+                raise RuntimeError("Can not create run artifacts table")
             cursor = connection.execute("""
                 CREATE TABLE IF NOT EXISTS experiment_results (
                     id              INTEGER PRIMARY KEY,
@@ -295,9 +324,16 @@ class Repository(object):
                 )
                 """)
             if cursor.lastrowid is None:
-                raise RuntimeError(
-                    "Can not create experiment description table"
+                raise RuntimeError("Can not create experiment result table")
+            cursor = connection.execute("""
+                CREATE TABLE IF NOT EXISTS working_directories(
+                    id              INTEGER PRIMARY KEY,
+                    path            TEXT NOT NULL,
+                    type            TEXT NOT NULL CHECK (type in ('LOCAL', 'REMOTE'))
                 )
+                """)
+            if cursor.lastrowid is None:
+                raise RuntimeError("Can not create working directory table")
 
     def __upsert_run_artifact(
         self, connection: sqlite3.Connection, a: RunArtifact
