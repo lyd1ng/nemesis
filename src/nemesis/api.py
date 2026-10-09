@@ -41,7 +41,7 @@ class ResultData:
     path: Path
 
 
-class ExperimentContext(object):
+class Api(object):
     """
     The ExperimentContext defines the API used in nemesis experiment
     description files.

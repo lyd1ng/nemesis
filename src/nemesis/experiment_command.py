@@ -10,7 +10,7 @@ from nemesis.repository import Repository
 from nemesis.utility import calculate_hash
 from nemesis.domain import ExperimentTemplate
 from nemesis.experiment_module import ExperimentModule
-from nemesis.experiment_context import ExperimentContext
+from nemesis.api import Api
 
 import importlib.util
 from typing import cast
@@ -101,7 +101,7 @@ def experiment_run(
     if ed.hash != _hash:
         raise RuntimeError("Detected post-registration tempering")
     # The whole API is defined within the ExperimentContext,
-    ec = ExperimentContext(rep, type, params, em.parameters)
+    ec = Api(rep, type, params, em.parameters)
     ec._init_experiment(description)
     # For all the logic happens in the module and here simply
     # all three hooks are invoked

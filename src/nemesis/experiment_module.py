@@ -5,7 +5,7 @@ Date:   20261007
 Author: Lyding Anrie Brumm.
 """
 
-from nemesis.experiment_context import ExperimentContext
+from nemesis.api import Api
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -22,4 +22,4 @@ class ExperimentModule(object):
     description: str
     # A list of all required parameters
     parameters: dict[str, type]
-    setup: Callable[[ExperimentContext], None]
+    setup: Callable[[Api], None]
