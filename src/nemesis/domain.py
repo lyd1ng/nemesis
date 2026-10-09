@@ -16,7 +16,7 @@ class ExperimentResult:
     The python representation of a result of a numerical experiment.
     """
 
-    id: int
+    id: int | None
     eid: int
     rid: int
     description: str
@@ -30,6 +30,7 @@ class Experiment:
     The python representation of a numerical experiment.
     """
 
+    id: int | None
     type: str
     end_time: float
     start_time: float
@@ -41,8 +42,8 @@ class Experiment:
         | Literal["FAILED"]
         | Literal["SUCCESS"]
     ) = "INIT"
-    id: int | None = None
     results: list[ExperimentResult] = field(default_factory=list)
+    mark: str = ""
 
 
 @dataclass
@@ -63,7 +64,7 @@ class RunArtifact:
     The python representation of an artifact of a run
     """
 
-    id: int
+    id: int | None
     rid: int
     path: Path
     hash: str
@@ -75,7 +76,7 @@ class Run:
     The python representation of a run within a numerical experiment.
     """
 
-    id: int
+    id: int | None
     eid: int
     params: str
     exit_code: int

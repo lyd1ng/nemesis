@@ -62,7 +62,7 @@ class Api(object):
         self.polling: float = polling
         self.params: Namespace = self._parse()
         # Just a dummy variable because None leads to static typo issues
-        self.experiment: Experiment = Experiment("", 0, 0, "", "", "INIT")
+        self.experiment: Experiment = Experiment(None, "", 0, 0, "", "", "INIT")
         self.runs: list[Run] = []
         self.result_run_data: list[ResultData] = []
         self.run_ids_modifier_dict: dict[int, RunOptions] = {}
@@ -86,7 +86,7 @@ class Api(object):
             )
         status = "INIT" if len(dependencies) == 0 else "WAITING"
         run: Run = Run(
-            -1,
+            None,
             self.experiment.id,
             reduce(lambda a, b: a + " " + b, params),
             999,
@@ -100,12 +100,12 @@ class Api(object):
             status,
             dependencies,
         )
-        run.id = self._rep.add_run(run)
+        run.id = self._rep.upsert_run(run)
         for output in outputs:
-            run.artifacts.append(RunArtifact(0, run.id, Path(output), ""))
+            run.artifacts.append(RunArtifact(None, run.id, Path(output), ""))
         self.runs.append(run)
         internal_id = len(self.runs) - 1
-        self._rep.update_run(run)
+        _ = self._rep.upsert_run(run)
         # Store kwargs for later use
         self.run_ids_modifier_dict[internal_id] = kwargs
         return internal_id
@@ -209,7 +209,7 @@ class Api(object):
                     r.start_time = time.time()
                     r.invocation = invocation
                     r.status = "RUNNING"
-                    self._rep.update_run(r)
+                    _ = self._rep.upsert_run(r)
                     active[
                         executor.submit(self._invoke, self.runs.index(r))
                     ] = r
@@ -230,10 +230,10 @@ class Api(object):
                         if r.exit_code == 0 and self._catch_artifacts(r)
                         else "FAILED"
                     )
-                    self._rep.update_run(r)
+                    _ = self._rep.upsert_run(r)
                 dirty_run_ids = self._update_status()
                 for i in dirty_run_ids:
-                    self._rep.update_run(self.runs[i])
+                    _ = self._rep.upsert_run(self.runs[i])
                 if (
                     len(
                         list(
@@ -262,14 +262,13 @@ class Api(object):
         if self.experiment.status == "SUCCESS":
             # If the experiment succeeded all runs succeeded as well, i.e.
             # all expected output files are present as well.
-            print("DEBUG: ADDING RESULTS TO EXPERIMENT DOMAIN:", end="")
             for result_run in self.result_run_data:
                 print(result_run.path, end=" ")
                 self.experiment.results.append(
                     ExperimentResult(
-                        0,
+                        None,
                         cast(int, self.experiment.id),
-                        self.runs[result_run.run_index].id,
+                        cast(int, self.runs[result_run.run_index].id),
                         result_run.description,
                         result_run.path,
                         calculate_hash(result_run.path),
@@ -279,40 +278,21 @@ class Api(object):
         else:
             # If the experiment did not succeed no results are added
             pass
-        self._rep.update_experiment(self.experiment)
-
-    def _fetch_run(self, run_id: int):
-        """
-        Fetch a run from the database
-        """
-        index = next(
-            (i for i, item in enumerate(self.runs) if item.id == run_id), None
-        )
-        if index is None:
-            raise RuntimeError(
-                "Could not find a instance of Run with id={run_id}"
-            )
-        self.runs[index] = self._rep.get_run(run_id)
-
-    def _fetch_all_runs(self):
-        """
-        Fetch a all runs from the database
-        """
-        for i, run in enumerate(self.runs):
-            self.runs[i] = self._rep.get_run(run.id)
+        _ = self._rep.upsert_experiment(self.experiment)
 
     def _init_experiment(self, description: str):
         """
         Start an experiment of the type $type.
         """
         experiment: Experiment = Experiment(
+            None,
             self._exp_type,
             0,
             time.time(),
             description,
             reduce(lambda a, b: a + " " + b, self._param_strs),
         )
-        self._rep.add_experiment(experiment)
+        experiment.id = self._rep.upsert_experiment(experiment)
         self.experiment = experiment
 
     def _parse(self) -> Namespace:

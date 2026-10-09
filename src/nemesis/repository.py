@@ -65,7 +65,7 @@ class Repository(object):
                 api_version=row[3],
             )
 
-    def add_experiment(self, ex: Experiment):
+    def upsert_experiment(self, ex: Experiment):
         """
         Add an experiment to the database
         """
@@ -73,10 +73,19 @@ class Repository(object):
             cursor = connection.execute(
                 """
                 INSERT INTO experiments
-                    (type, start_time, end_time, description, params, status)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (id, type, start_time, end_time, description, params, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    type = excluded.type,
+                    start_time = excluded.start_time,
+                    end_time = excluded.end_time,
+                    description = excluded.description,
+                    params = excluded.params,
+                    status = excluded.status
+                RETURNING id
             """,
                 (
+                    ex.id,
                     ex.type,
                     ex.start_time,
                     ex.end_time,
@@ -85,40 +94,12 @@ class Repository(object):
                     ex.status,
                 ),
             )
-            id = cursor.lastrowid
+            id = cursor.fetchone()[0]
             if id is None:
-                raise RuntimeError("Can not insert experiment")
+                raise RuntimeError("Can not upsert experiment ")
             for result in ex.results:
-                print("DEBUG FROM WITHIN REPO: UPSERTIN EXPERIMENT RESULT")
                 result.id = self.__upsert_experiment_result(connection, result)
-            ex.id = id
-
-    def update_experiment(self, ex: Experiment):
-        """
-        Update an experiment
-        """
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE experiments SET
-                    type = ?, start_time = ?, end_time = ?,
-                    description = ?, status = ?
-                WHERE id = ?
-            """,
-                (
-                    ex.type,
-                    ex.start_time,
-                    ex.end_time,
-                    ex.description,
-                    ex.status,
-                    ex.id,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise RuntimeError("Can not update experiment")
-            for result in ex.results:
-                print("DEBUG FROM WITHIN REPO: UPSERTIN EXPERIMENT RESULT")
-                result.id = self.__upsert_experiment_result(connection, result)
+            return id
 
     def get_list_of_experiments(self) -> list[str]:
         with self._connect() as connection:
@@ -151,7 +132,7 @@ class Repository(object):
                 runs.append(self.get_run(run_id[0]))
         return runs
 
-    def add_run(self, run: Run) -> int:
+    def upsert_run(self, run: Run) -> int:
         """
         Add a run object to an experiment
         """
@@ -160,11 +141,25 @@ class Repository(object):
             cursor = connection.execute(
                 """
                 INSERT INTO runs 
-                    (eid, end_time, start_time, description, executable, executable_hash, executable_commit, params, exit_code, status, invocation)
+                    (id, eid, end_time, start_time, description, executable, executable_hash, executable_commit, params, exit_code, status, invocation)
                 VALUES
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    eid = excluded.eid,
+                    end_time = excluded.end_time,
+                    start_time = excluded.start_time,
+                    description = excluded.description,
+                    executable = excluded.executable,
+                    executable_hash = excluded.executable_hash,
+                    executable_commit = excluded.executable_commit,
+                    params = excluded.params,
+                    exit_code = excluded.exit_code,
+                    status = excluded.status,
+                    invocation = excluded.invocation
+                RETURNING id
                 """,
                 (
+                    run.id,
                     run.eid,
                     run.end_time,
                     run.start_time,
@@ -178,9 +173,9 @@ class Repository(object):
                     run.invocation,
                 ),
             )
-            run_id = cursor.lastrowid
+            run_id = cursor.fetchone()[0]
             if run_id is None:
-                raise RuntimeError("Can not add run")
+                raise RuntimeError("Can not upsert experiment ")
             for artifact in run.artifacts:
                 artifact.id = self.__upsert_run_artifact(connection, artifact)
         return run_id
@@ -217,39 +212,6 @@ class Repository(object):
         )
         return run
 
-    def update_run(self, run: Run):
-        """
-        Update a run
-        """
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                UPDATE runs SET
-                    eid = ?,  end_time = ?,  start_time = ?,  description = ?,  executable = ?, 
-                    executable_hash = ?,  executable_commit = ?,  params = ?,  exit_code = ?, invocation = ?,
-                    status = ?
-                WHERE id = ?
-                """,
-                (
-                    run.eid,
-                    run.end_time,
-                    run.start_time,
-                    run.description,
-                    str(run.executable),
-                    run.executable_hash,
-                    run.executable_commit,
-                    run.params,
-                    run.exit_code,
-                    run.invocation,
-                    run.status,
-                    run.id,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise RuntimeError("Can not update experiment")
-            for artifact in run.artifacts:
-                artifact.id = self.__upsert_run_artifact(connection, artifact)
-
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
         _ = connection.execute("PRAGMA foreign_keys = ON")
@@ -278,6 +240,7 @@ class Repository(object):
                     start_time  FLOAT,
                     description TEXT,
                     params      TEXT,
+                    mark        TEXT,
                     status      TEXT NOT NULL CHECK (status in ('INIT', 'RUNNING', 'FAILED', 'SUCCESS'))
                 )
                 """)
