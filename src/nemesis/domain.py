@@ -11,6 +11,20 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class ExperimentResult:
+    """
+    The python representation of a result of a numerical experiment.
+    """
+
+    id: int
+    eid: int
+    rid: int
+    description: str
+    path: Path
+    hash: str
+
+
+@dataclass
 class Experiment:
     """
     The python representation of a numerical experiment.
@@ -28,23 +42,11 @@ class Experiment:
         | Literal["SUCCESS"]
     ) = "INIT"
     id: int | None = None
+    results: list[ExperimentResult] = field(default_factory=list)
 
 
 @dataclass
-class ExperimentResult:
-    """
-    The python representation of a result of a numerical experiment.
-    """
-
-    id: int
-    experiment_id: int
-    description: str
-    path: Path
-    hash: str
-
-
-@dataclass
-class ExperimentDescription(object):
+class ExperimentTemplate(object):
     """
     Describes an experiment description within the database
     """

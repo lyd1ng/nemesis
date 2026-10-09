@@ -10,7 +10,7 @@ from typing import Self, cast
 from pathlib import Path
 from collections.abc import Callable
 from platformdirs import user_data_path
-from dataclasses import dataclass, fields, replace, asdict
+from dataclasses import dataclass, fields, replace
 from nemesis.constants import DEFAULT_GLOBAL_PATH, DEFAULT_LOCAL_PATH
 
 # This string to callable map is used to convert the string annotations

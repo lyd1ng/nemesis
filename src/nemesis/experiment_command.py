@@ -8,7 +8,7 @@ Author: Lyding Anrie Brumm.
 from nemesis.constants import VERSION
 from nemesis.repository import Repository
 from nemesis.utility import calculate_hash
-from nemesis.domain import ExperimentDescription
+from nemesis.domain import ExperimentTemplate
 from nemesis.experiment_module import ExperimentModule
 from nemesis.experiment_context import ExperimentContext
 
@@ -35,14 +35,14 @@ def _load_experiment_module(path: Path) -> tuple[ExperimentModule, str]:
     return em, calculate_hash(path)
 
 
-def _load_experiment_description(path: Path) -> ExperimentDescription:
+def _load_experiment_description(path: Path) -> ExperimentTemplate:
     """
     Load an experiment description from a user specified module at path.
     Only the name is realy read from the python file.
     """
     em, _hash = _load_experiment_module(path)
     name = em.name
-    return ExperimentDescription(
+    return ExperimentTemplate(
         type=name, path=path, hash=_hash, api_version=VERSION
     )
 
@@ -102,9 +102,10 @@ def experiment_run(
         raise RuntimeError("Detected post-registration tempering")
     # The whole API is defined within the ExperimentContext,
     ec = ExperimentContext(rep, type, params, em.parameters)
-    ec.init_experiment(description)
+    ec._init_experiment(description)
     # For all the logic happens in the module and here simply
     # all three hooks are invoked
     em.setup(ec)
-    ec.conduct()
+    ec._conduct()
+    ec._postconduct()
     return 0

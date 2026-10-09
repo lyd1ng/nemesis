@@ -6,7 +6,13 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
-from nemesis.domain import (ExperimentDescription, Experiment, Run, RunArtifact)
+from nemesis.domain import (
+    ExperimentResult,
+    ExperimentTemplate,
+    Experiment,
+    Run,
+    RunArtifact,
+)
 from pathlib import Path
 import sqlite3
 
@@ -23,7 +29,7 @@ class Repository(object):
         self.db_path: Path = db_path
         self._initialize()
 
-    def add_experiment_description(self, ed: ExperimentDescription):
+    def add_experiment_description(self, ed: ExperimentTemplate):
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -38,7 +44,7 @@ class Repository(object):
             raise RuntimeError("Can not create expreiment description")
         return cursor.lastrowid
 
-    def get_experiment_description(self, name: str) -> ExperimentDescription:
+    def get_experiment_description(self, name: str) -> ExperimentTemplate:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -52,7 +58,7 @@ class Repository(object):
                 raise RuntimeError(
                     "Experiment description could not be fetched"
                 )
-            return ExperimentDescription(
+            return ExperimentTemplate(
                 type=str(row[0]),
                 path=Path(row[1]),
                 hash=row[2],
@@ -79,9 +85,13 @@ class Repository(object):
                     ex.status,
                 ),
             )
-            if cursor.lastrowid is None:
+            id = cursor.lastrowid
+            if id is None:
                 raise RuntimeError("Can not insert experiment")
-            ex.id = cursor.lastrowid
+            for result in ex.results:
+                print("DEBUG FROM WITHIN REPO: UPSERTIN EXPERIMENT RESULT")
+                result.id = self.__upsert_experiment_result(connection, result)
+            ex.id = id
 
     def update_experiment(self, ex: Experiment):
         """
@@ -106,6 +116,9 @@ class Repository(object):
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Can not update experiment")
+            for result in ex.results:
+                print("DEBUG FROM WITHIN REPO: UPSERTIN EXPERIMENT RESULT")
+                result.id = self.__upsert_experiment_result(connection, result)
 
     def get_list_of_experiments(self) -> list[str]:
         with self._connect() as connection:
@@ -169,7 +182,7 @@ class Repository(object):
             if run_id is None:
                 raise RuntimeError("Can not add run")
             for artifact in run.artifacts:
-                artifact.id = self.__add_run_artifact(connection, artifact)
+                artifact.id = self.__upsert_run_artifact(connection, artifact)
         return run_id
 
     def get_run(self, run_id: int) -> Run:
@@ -235,7 +248,7 @@ class Repository(object):
             if cursor.rowcount != 1:
                 raise RuntimeError("Can not update experiment")
             for artifact in run.artifacts:
-                self.__update_run_artifact(connection, artifact)
+                artifact.id = self.__upsert_run_artifact(connection, artifact)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
@@ -306,29 +319,26 @@ class Repository(object):
                 raise RuntimeError(
                     "Can not create experiment description table"
                 )
+            cursor = connection.execute("""
+                CREATE TABLE IF NOT EXISTS experiment_results (
+                    id              INTEGER PRIMARY KEY,
+                    eid             INTEGER NOT NULL,
+                    rid             INTEGER NOT NULL,
+                    description     TEXT NOT NULL,
+                    path            TEXT NOT NULL,
+                    hash            TEXT NOT NULL,
+                    FOREIGN KEY (eid) REFERENCES experiments(id)
+                    FOREIGN KEY (rid) REFERENCES runs(id)
+                )
+                """)
+            if cursor.lastrowid is None:
+                raise RuntimeError(
+                    "Can not create experiment description table"
+                )
 
-    def __add_run_artifact(
+    def __upsert_run_artifact(
         self, connection: sqlite3.Connection, a: RunArtifact
-    ):
-        """
-        Add a run artifact
-        """
-        cursor = connection.execute(
-            """
-            INSERT INTO run_artifacts 
-                (rid, path, hash)
-            VALUES
-                (?, ?, ?)
-            """,
-            (a.rid, a.path, a.hash),
-        )
-        if cursor.lastrowid is None:
-            raise RuntimeError("Can not add run artifact")
-        return cursor.lastrowid
-
-    def __update_run_artifact(
-        self, connection: sqlite3.Connection, a: RunArtifact
-    ):
+    ) -> int:
         """
         Update run artifact
         """
@@ -340,9 +350,36 @@ class Repository(object):
                 rid  = excluded.rid,
                 path = excluded.path,
                 hash = excluded.hash
+            RETURNING id
             """,
             (a.id, a.rid, str(a.path), a.hash),
         )
-        if cursor.rowcount != 1:
-            print(a)
-            raise RuntimeError("Can not insert/update run artifact")
+        id = cursor.fetchone()[0]
+        if id is None:
+            raise RuntimeError("Can not upsert run artifact")
+        return id
+
+    def __upsert_experiment_result(
+        self, connection: sqlite3.Connection, er: ExperimentResult
+    ) -> int:
+        """
+        Upsert experiment result
+        """
+        cursor = connection.execute(
+            """
+            INSERT INTO experiment_results (id, eid, rid, description, path, hash)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                eid  = excluded.eid,
+                rid  = excluded.rid,
+                description = excluded.hash,
+                path = excluded.path,
+                hash = excluded.hash
+            RETURNING id
+            """,
+            (er.id, er.eid, er.rid, er.description, str(er.path), er.hash),
+        )
+        id = cursor.fetchone()[0]
+        if id is None:
+            raise RuntimeError("Can not upsert run artifact")
+        return id

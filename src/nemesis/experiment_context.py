@@ -5,13 +5,15 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
-from nemesis.domain import (Experiment, Run, RunArtifact)
+from nemesis.domain import (Experiment, ExperimentResult, Run, RunArtifact)
 from nemesis.repository import Repository
 from nemesis.utility import (calculate_hash, get_git_commit)
 
 import time
 import subprocess
-from typing import TypedDict, Unpack, TextIO
+from copy import copy
+from dataclasses import dataclass
+from typing import TypedDict, Unpack, TextIO, cast
 from pathlib import Path
 from functools import reduce
 from argparse import ArgumentParser, Namespace
@@ -32,7 +34,18 @@ class RunOptions(TypedDict, total=False):
     stderr: TextIO
 
 
+@dataclass
+class ResultData:
+    run_index: int
+    description: str
+    path: Path
+
+
 class ExperimentContext(object):
+    """
+    The ExperimentContext defines the API used in nemesis experiment
+    description files.
+    """
 
     def __init__(
         self,
@@ -51,21 +64,8 @@ class ExperimentContext(object):
         # Just a dummy variable because None leads to static typo issues
         self.experiment: Experiment = Experiment("", 0, 0, "", "", "INIT")
         self.runs: list[Run] = []
+        self.result_run_data: list[ResultData] = []
         self.run_ids_modifier_dict: dict[int, RunOptions] = {}
-
-    def init_experiment(self, description: str):
-        """
-        Start an experiment of the type $type.
-        """
-        experiment: Experiment = Experiment(
-            self._exp_type,
-            0,
-            time.time(),
-            description,
-            reduce(lambda a, b: a + " " + b, self._param_strs),
-        )
-        self._rep.add_experiment(experiment)
-        self.experiment = experiment
 
     def add_run(
         self,
@@ -110,7 +110,56 @@ class ExperimentContext(object):
         self.run_ids_modifier_dict[internal_id] = kwargs
         return internal_id
 
-    def update_status(self) -> list[int]:
+    def depends_on_nothing(self) -> list[int]:
+        """
+        Returns an empty list. This way creating an experiment with
+        no dependencies is more visual
+        """
+        return []
+
+    def depends_on_all(self) -> list[int]:
+        """
+        Returns a list indices of all previously added runs.
+        This way creating a run which depends on all previously added runs
+        is more visual
+        """
+        return list(range(len(self.runs)))
+
+    def mark_artifact_as_result(
+        self,
+        run_index: int,
+        description: str,
+        path: Path,
+    ) -> None:
+        """
+        Check if the artifact belongs to a run which qualifies to produce
+        a result. A run qualifies to produce a result if there is no
+        other run depending on it.
+        """
+        result_data = ResultData(run_index, description, path)
+        joint_dependency_list: list[int] = reduce(
+            lambda a, b: a + b, [run.dependencies for run in self.runs]
+        )
+        if result_data.run_index in joint_dependency_list:
+            raise RuntimeError(
+                f"Can not mark {result_data.run_index} as a result run. Other runs depend on it."
+            )
+        # Check if the names of the artifacts which should be lifted
+        # to experiment results form a subsets of the registered artifacts
+        # of the runs. Otherwise the user messed up.
+        if result_data.path not in [
+            a.path for a in self.runs[result_data.run_index].artifacts
+        ]:
+            raise RuntimeError(
+                f"Can not mark {result_data.path} as experiment result. "
+                + f"Expected result_data.source_paths of {result_data.run_index} are "
+                + f"{[a.path for a in self.runs[result_data.run_index].artifacts]}"
+                + f"got {result_data.path}"
+            )
+        data: ResultData = copy(result_data)
+        self.result_run_data.append(data)
+
+    def _update_status(self) -> list[int]:
         """
         Update which jobs are waiting
         """
@@ -143,7 +192,7 @@ class ExperimentContext(object):
                 pass
         return run_ids
 
-    def conduct(self):
+    def _conduct(self):
         """
         Conduct the experiment
         """
@@ -182,7 +231,7 @@ class ExperimentContext(object):
                         else "FAILED"
                     )
                     self._rep.update_run(r)
-                dirty_run_ids = self.update_status()
+                dirty_run_ids = self._update_status()
                 for i in dirty_run_ids:
                     self._rep.update_run(self.runs[i])
                 if (
@@ -198,14 +247,41 @@ class ExperimentContext(object):
                     == 0
                 ):
                     break
+
+    def _postconduct(self):
+        """
+        Set the experiment status.
+        Add experiment results.
+        """
+
         self.experiment.status = (
             "SUCCESS"
             if all(run.status == "SUCCESS" for run in self.runs)
             else "FAILED"
         )
+        if self.experiment.status == "SUCCESS":
+            # If the experiment succeeded all runs succeeded as well, i.e.
+            # all expected output files are present as well.
+            print("DEBUG: ADDING RESULTS TO EXPERIMENT DOMAIN:", end="")
+            for result_run in self.result_run_data:
+                print(result_run.path, end=" ")
+                self.experiment.results.append(
+                    ExperimentResult(
+                        0,
+                        cast(int, self.experiment.id),
+                        self.runs[result_run.run_index].id,
+                        result_run.description,
+                        result_run.path,
+                        calculate_hash(result_run.path),
+                    )
+                )
+            print()
+        else:
+            # If the experiment did not succeed no results are added
+            pass
         self._rep.update_experiment(self.experiment)
 
-    def fetch_run(self, run_id: int):
+    def _fetch_run(self, run_id: int):
         """
         Fetch a run from the database
         """
@@ -218,12 +294,26 @@ class ExperimentContext(object):
             )
         self.runs[index] = self._rep.get_run(run_id)
 
-    def fetch_all_runs(self):
+    def _fetch_all_runs(self):
         """
         Fetch a all runs from the database
         """
         for i, run in enumerate(self.runs):
             self.runs[i] = self._rep.get_run(run.id)
+
+    def _init_experiment(self, description: str):
+        """
+        Start an experiment of the type $type.
+        """
+        experiment: Experiment = Experiment(
+            self._exp_type,
+            0,
+            time.time(),
+            description,
+            reduce(lambda a, b: a + " " + b, self._param_strs),
+        )
+        self._rep.add_experiment(experiment)
+        self.experiment = experiment
 
     def _parse(self) -> Namespace:
         """
