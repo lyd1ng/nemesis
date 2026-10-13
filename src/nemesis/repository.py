@@ -12,6 +12,7 @@ from nemesis.domain import (
     Experiment,
     Run,
     RunArtifact,
+    WorkingDirectory,
 )
 from pathlib import Path
 from typing import cast
@@ -213,7 +214,7 @@ class Repository(object):
         )
         return run
 
-    def add_working_directory(self, path: Path, dir_type: str):
+    def add_working_directory(self, working_directory: WorkingDirectory):
         """
         Add a new working directory to the db
         """
@@ -221,11 +222,15 @@ class Repository(object):
             cursor = connection.execute(
                 """
                 INSERT INTO working_directories 
-                    (path, type)
+                    (path, type, ssh_alias)
                 VALUES
-                    (?, ?)
+                    (?, ?, ?)
                 """,
-                (str(path), dir_type),
+                (
+                    str(working_directory.path),
+                    working_directory.type,
+                    working_directory.ssh_alias,
+                ),
             )
         if cursor.lastrowid is None:
             raise RuntimeError("Can add working directory")
@@ -246,6 +251,27 @@ class Repository(object):
             if row is None:
                 return None
         return cast(int, row[0])
+
+    def get_working_directory(self, id: int) -> WorkingDirectory:
+        """ """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+            SELECT id, path, type, ssh_alias from working_directories WHERE id=?
+            """,
+                (id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"Could not get working_directory of id {id}"
+                )
+        return WorkingDirectory(
+            id=row[0],
+            path=row[1],
+            type=row[2],
+            ssh_alias=row[3],
+        )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
@@ -329,11 +355,26 @@ class Repository(object):
                 CREATE TABLE IF NOT EXISTS working_directories(
                     id              INTEGER PRIMARY KEY,
                     path            TEXT NOT NULL,
-                    type            TEXT NOT NULL CHECK (type in ('LOCAL', 'REMOTE'))
+                    type            TEXT NOT NULL CHECK (type in ('LOCAL', 'REMOTE')),
+                    ssh_alias       TEXT
                 )
                 """)
             if cursor.lastrowid is None:
                 raise RuntimeError("Can not create working directory table")
+            cursor = connection.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS unique_local_directory
+                ON working_directories(path)
+                WHERE ssh_alias IS NULL
+                """)
+            if cursor.lastrowid is None:
+                raise RuntimeError("Can not create unique index for local")
+            cursor = connection.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS unique_remote_directory
+                ON working_directories(ssh_alias, path)
+                WHERE ssh_alias IS NOT NULL
+                """)
+            if cursor.lastrowid is None:
+                raise RuntimeError("Can not create unique index for remote")
 
     def __upsert_run_artifact(
         self, connection: sqlite3.Connection, a: RunArtifact
@@ -354,9 +395,14 @@ class Repository(object):
             (a.id, a.rid, str(a.path), a.hash),
         )
         id = cursor.fetchone()[0]
-        if id is None:
-            raise RuntimeError("Can not upsert run artifact")
         return id
+
+    def upsert_run_artifact(self, a: RunArtifact) -> int:
+        """
+        Update run artifact
+        """
+        with self._connect() as connection:
+            return self.__upsert_run_artifact(connection, a)
 
     def __upsert_experiment_result(
         self, connection: sqlite3.Connection, er: ExperimentResult

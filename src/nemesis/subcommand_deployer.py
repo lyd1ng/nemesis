@@ -78,9 +78,7 @@ def handle_experiment_run(
 def handle_directory_register(
     args: argparse.Namespace, _: Config, repository: Repository
 ):
-    basic_subcommands.register_directory(
-        args.path, "LOCAL", args.force, repository
-    )
+    basic_subcommands.register_directory(args.path, args.force, repository)
 
 
 def invoke_subcommand(config: Config, repository: Repository) -> None:

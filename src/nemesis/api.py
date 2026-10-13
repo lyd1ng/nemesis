@@ -5,17 +5,27 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
-from nemesis.domain import (Experiment, ExperimentResult, Run, RunArtifact)
+from nemesis.domain import (
+    Experiment,
+    ExperimentResult,
+    Run,
+    RunArtifact,
+    WorkingDirectory,
+)
 from nemesis.repository import Repository
-from nemesis.utility import (calculate_hash, get_git_commit)
+from nemesis.utility import (
+    invoke_within_wd,
+    RunOptionsU,
+)
+import nemesis.filesystem as fs
 
 import time
-import subprocess
 from copy import copy
 from dataclasses import dataclass
-from typing import TypedDict, Unpack, TextIO, cast
+from typing import Unpack, cast, Literal
 from pathlib import Path
 from functools import reduce
+from collections.abc import Sequence
 from argparse import ArgumentParser, Namespace
 from concurrent.futures import (
     ThreadPoolExecutor,
@@ -23,15 +33,6 @@ from concurrent.futures import (
     wait,
     FIRST_COMPLETED,
 )
-
-
-class RunOptions(TypedDict, total=False):
-    """
-    Additional options passed from add_run to subprocess.open
-    """
-
-    stdout: TextIO
-    stderr: TextIO
 
 
 @dataclass
@@ -43,7 +44,7 @@ class ResultData:
 
 class Api(object):
     """
-    The ExperimentContext defines the API used in nemesis experiment
+    Defines the API used in nemesis experiment
     description files.
     """
 
@@ -52,6 +53,7 @@ class Api(object):
         repository: Repository,
         wid: int,
         exp_type: str,
+        description: str,
         params: list[str],
         parameter_types: dict[str, type],
         polling: float = 1.0,
@@ -63,32 +65,42 @@ class Api(object):
         self._param_types: dict[str, type] = parameter_types
         self.polling: float = polling
         self.params: Namespace = self._parse()
-        # Just a dummy variable because None leads to static typo issues
-        self.experiment: Experiment = Experiment(
-            None, self._wid, "", 0, 0, "", "", "INIT"
-        )
+        self.experiment: Experiment = self._init_experiment(description)
         self.runs: list[Run] = []
         self.result_run_data: list[ResultData] = []
-        self.run_ids_modifier_dict: dict[int, RunOptions] = {}
+        self.run_ids_modifier_dict: dict[int, RunOptionsU] = {}
 
-    def add_run(
+        self.working_directory: WorkingDirectory = (
+            self._rep.get_working_directory(self._wid)
+        )
+
+        print("DEBUG: ", str(self.experiment.id))
+        error_code = fs.confined_path_mkdir(
+            Path(str(self.experiment.id)), self.working_directory
+        )
+        print("DEBUG: ", str(error_code))
+        if error_code != 0:
+            raise RuntimeError(
+                f"Can not create experiment directory $working_dir/{self.experiment.id}"
+            )
+
+    def _add_run(
         self,
         description: str,
         executable: Path,
         params: list[str],
         dependencies: list[int],
         outputs: list[str],
-        **kwargs: Unpack[RunOptions],
+        mode: Literal["CONFINED"] | Literal["UNCONFINED"],
+        **kwargs: Unpack[RunOptionsU],
     ) -> int:
         """
         Add a run to the current experiment
-
         """
         if self.experiment.id is None:
             raise RuntimeError(
                 "Can not add run to partially initialised experiment"
             )
-        status = "INIT" if len(dependencies) == 0 else "WAITING"
         run: Run = Run(
             None,
             self.experiment.id,
@@ -99,20 +111,98 @@ class Api(object):
             0,
             description,
             executable,
-            calculate_hash(executable),
-            get_git_commit(executable),
-            status,
+            fs.unconfined_hash(executable, self.working_directory),
+            fs.get_git_commit(executable, self.working_directory),
+            mode,
+            "INIT",
             dependencies,
         )
+        run.status = "INIT" if len(dependencies) == 0 else "WAITING"
         run.id = self._rep.upsert_run(run)
         for output in outputs:
-            run.artifacts.append(RunArtifact(None, run.id, Path(output), ""))
+            run.artifacts.append(
+                RunArtifact(None, run.id, Path(output), hash="")
+            )
         self.runs.append(run)
         internal_id = len(self.runs) - 1
         _ = self._rep.upsert_run(run)
         # Store kwargs for later use
         self.run_ids_modifier_dict[internal_id] = kwargs
+        # Create the directory for the run
+        error_code = fs.confined_path_mkdir(
+            Path(str(self.experiment.id)) / Path(str(run.id)),
+            self.working_directory,
+        )
+        if error_code != 0:
+            raise RuntimeError(
+                f"Can not create run directory $working_dir/{self.experiment.id}/{run.id}"
+            )
         return internal_id
+
+    def add_confined_run(
+        self,
+        description: str,
+        executable: Path,
+        params: list[str],
+        dependencies: list[int],
+        outputs: list[str],
+        **kwargs: Unpack[RunOptionsU],
+    ) -> int:
+        """
+        Add a confined run to the experiment.
+        A run is confined if all assets are generated in the CWD
+        or subdirectories, i.e. if all assets obey the nemesis
+        file structure.
+        """
+        for output in outputs:
+            output_path = Path(output)
+            if output_path.is_absolute():
+                raise RuntimeError(
+                    "Confined runs must not contain absolute asset paths"
+                )
+            if ".." in output_path.parts:
+                raise RuntimeError(
+                    "Confined runs must not escpaing asset paths (../ detected)"
+                )
+        return self._add_run(
+            description,
+            executable,
+            params,
+            dependencies,
+            outputs,
+            "CONFINED",
+            **kwargs,
+        )
+
+    def add_unconfined_run(
+        self,
+        description: str,
+        executable: Path,
+        params: list[str],
+        dependencies: list[int],
+        outputs: list[str],
+        **kwargs: Unpack[RunOptionsU],
+    ) -> int:
+        """
+        Add an unconfined run to the experiment.
+        An unconfined run can create assets at arbitrary places
+        not necessarily obeying the nemesis file structure.
+        """
+        for output in outputs:
+            output_path = Path(output)
+            if not output_path.is_absolute():
+                raise RuntimeError(
+                    "Unconfined runs must not contain reltive asset paths"
+                )
+        return self._add_run(
+            description,
+            executable,
+            params,
+            dependencies,
+            outputs,
+            "UNCONFINED",
+            **kwargs,
+        )
 
     def depends_on_nothing(self) -> list[int]:
         """
@@ -200,6 +290,7 @@ class Api(object):
         """
         Conduct the experiment
         """
+        self.experiment.start_time = time.time()
 
         with ThreadPoolExecutor() as executor:
             active: dict[Future[int], Run] = {}
@@ -275,7 +366,9 @@ class Api(object):
                         cast(int, self.runs[result_run.run_index].id),
                         result_run.description,
                         result_run.path,
-                        calculate_hash(result_run.path),
+                        fs.confined_hash(
+                            result_run.path, self.working_directory
+                        ),
                     )
                 )
             print()
@@ -293,12 +386,12 @@ class Api(object):
             self._wid,
             self._exp_type,
             0,
-            time.time(),
+            0,
             description,
             reduce(lambda a, b: a + " " + b, self._param_strs),
         )
         experiment.id = self._rep.upsert_experiment(experiment)
-        self.experiment = experiment
+        return experiment
 
     def _parse(self) -> Namespace:
         """
@@ -315,28 +408,59 @@ class Api(object):
 
     def _invoke(self, run_id: int) -> int:
         """
-        Sets the start_time, add the invocation string and invoke the run
+        Invoke a run
         """
+        run = self.runs[run_id]
+        command: Sequence[str] = [str(run.executable), run.params]
+        subdir = Path("")
         options = self.run_ids_modifier_dict[run_id]
-        result = subprocess.run(
-            [
-                str(self.runs[run_id].executable),
-                self.runs[run_id].params,
-            ],
-            **options,
-        )
-        return result.returncode
+        return invoke_within_wd(
+            command, subdir, self.working_directory, **options
+        ).returncode
 
-    def _catch_artifacts(self, run: Run):
+    def _catch_artifacts(self, run: Run) -> bool:
         """
         Computes the hash of all artifacts.
         If an artifact is missing False is returned
-        s.t. the status of the Run can be set to FAILED
+        s.t. the status of the Run can be set to FAILED.
+
+        For unconfined runs the assets are also copied to
+        the corresponding nemesis->experiment->run path
         """
         success = True
+        exists = (
+            fs.confined_path_exists
+            if run.mode == "CONFINED"
+            else fs.unconfined_path_exists
+        )
+        calculate_hash = (
+            fs.confined_hash if run.mode == "CONFINED" else fs.unconfined_hash
+        )
         for artifact in run.artifacts:
-            if artifact.path.exists():
-                artifact.hash = calculate_hash(artifact.path)
+            if 0 == exists(artifact.path, self.working_directory):
+                artifact.hash = calculate_hash(
+                    artifact.path, self.working_directory
+                )
+
+                if run.mode == "UNCONFINED":
+                    confined_path: Path = (
+                        Path(str(self.experiment.id))
+                        / Path(str(run.id))
+                        / Path(artifact.path.parts[-1])
+                    )
+                    error_code = fs.unconfined_cp(
+                        artifact.path,
+                        self.working_directory.path / confined_path,
+                        self.working_directory,
+                    )
+                    print("DEBUG > cp error: ", error_code)
+                    if error_code != 0:
+                        raise RuntimeError("Can not confine unconfined asset")
+                    artifact.path = confined_path
+                    _ = self._rep.upsert_run_artifact(artifact)
+                else:
+                    # Artifact is already confined
+                    pass
             else:
                 success = False
         return success
@@ -348,9 +472,9 @@ class Api(object):
         suffix = ""
         options = self.run_ids_modifier_dict[self.runs.index(run)]
         if "stdout" in options:
-            suffix += f" > {options['stdout'].name}"
+            suffix += f" > {options['stdout']}"
         if "stderr" in options:
-            suffix += f" 2> {options['stderr'].name}"
+            suffix += f" 2> {options['stderr']}"
         invocation = str(run.executable) + " "
         invocation += run.params
         return invocation + suffix

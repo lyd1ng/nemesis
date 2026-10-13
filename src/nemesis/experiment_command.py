@@ -7,10 +7,10 @@ Author: Lyding Anrie Brumm.
 
 from nemesis.constants import VERSION
 from nemesis.repository import Repository
-from nemesis.utility import calculate_hash
 from nemesis.domain import ExperimentTemplate
 from nemesis.experiment_module import ExperimentModule
 from nemesis.api import Api
+from nemesis.utility import calculate_local_hash
 
 import importlib.util
 from typing import cast
@@ -32,7 +32,7 @@ def _load_experiment_module(path: Path) -> tuple[ExperimentModule, str]:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     em = cast(ExperimentModule, module.experiment_module)
-    return em, calculate_hash(path)
+    return em, calculate_local_hash(path)
 
 
 def _load_experiment_description(path: Path) -> ExperimentTemplate:
@@ -102,8 +102,7 @@ def experiment_run(
     if ed.hash != _hash:
         raise RuntimeError("Detected post-registration tempering")
     # The whole API is defined within the ExperimentContext,
-    ec = Api(rep, wid, type, params, em.parameters)
-    ec._init_experiment(description)  # pyright: ignore[reportPrivateUsage]
+    ec = Api(rep, wid, type, description, params, em.parameters)
     # For all the logic happens in the module and here simply
     # all three hooks are invoked
     em.setup(ec)
