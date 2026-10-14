@@ -6,7 +6,7 @@ Author: Lyding Anrie Brumm.
 """
 
 from nemesis.repository import Repository
-from nemesis.domain import WorkingDirectory, WorkingDirectoryConfig
+from nemesis.domain import WorkingDirectory, WorkingDirectoryEnv
 
 from hashlib import sha256
 from pathlib import Path
@@ -44,26 +44,9 @@ def register_directory(
     working_directory.id = repository.add_working_directory(working_directory)
     return working_directory
 
-    # Generate and add the configuration to the working directory
-    # so that the working_directory can be rewritten to the database
-    # which will add the working directory configurations as well
-    config_content = (
-        editor() if config_path is None else config_path.read_text()
-    )
-    config_hash = str(sha256(config_content.encode()).hexdigest())
-    working_directory_config = WorkingDirectoryConfig(
-        None,
-        working_directory.id,
-        config_content,
-        config_hash,
-        now(),
-    )
-    working_directory.config.append(working_directory_config)
-    repository.add_working_directory_config(working_directory)
-
 
 def configure_working_directory(
-    working_directory_config: WorkingDirectoryConfig,
+    working_directory_env: WorkingDirectoryEnv,
     rep: Repository,
 ) -> None:
     """
@@ -72,6 +55,6 @@ def configure_working_directory(
     For now only the lastest configuration is used when an experiment is
     run, but all older versions are stored as well to ensure reproducability.
     """
-    working_directory_config.id = rep.add_working_directory_config(
-        working_directory_config
+    working_directory_env.id = rep.add_working_directory_env(
+        working_directory_env
     )

@@ -11,7 +11,7 @@ from nemesis.domain import (
     Run,
     RunArtifact,
     WorkingDirectory,
-    WorkingDirectoryConfig,
+    WorkingDirectoryEnv,
 )
 from nemesis.repository import Repository
 from nemesis.utility import (
@@ -89,9 +89,9 @@ class Api(object):
         self.params: Namespace = self._parse()
 
         # A read only interface for the parameters of the latest configuration
-        self.config: Mapping[str, object] = (
-            self._generate_parameter_dict_from_lastest_working_directory_configuration(
-                self._working_directory.config[-1]
+        self.env: Mapping[str, object] = (
+            self._generate_parameter_dict_from_lastest_working_directory_env(
+                self._working_directory.env[-1]
             )
         )
         # =====================================================================
@@ -491,12 +491,12 @@ class Api(object):
         invocation += run.params
         return invocation + suffix
 
-    def _generate_parameter_dict_from_lastest_working_directory_configuration(
-        self, working_directory_configuration: WorkingDirectoryConfig
+    def _generate_parameter_dict_from_lastest_working_directory_env(
+        self, working_directory_env: WorkingDirectoryEnv
     ) -> dict[str, object]:
         """
         Use the latest working directory configuration to get a dictionary
         of parameters for the user.
         """
-        result = tomllib.loads(str(working_directory_configuration.content))
+        result = tomllib.loads(str(working_directory_env.content))
         return result

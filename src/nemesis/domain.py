@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class WorkingDirectoryConfig:
+class WorkingDirectoryEnv:
     """
     The python representation of a working directroy config
     """
@@ -33,7 +33,7 @@ class WorkingDirectory:
     path: Path
     type: Literal["LOCAL"] | Literal["REMOTE"]
     ssh_alias: str | None
-    config: list[WorkingDirectoryConfig] = field(default_factory=list)
+    env: list[WorkingDirectoryEnv] = field(default_factory=list)
 
 
 @dataclass

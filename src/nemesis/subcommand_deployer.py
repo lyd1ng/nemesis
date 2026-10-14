@@ -11,7 +11,7 @@ Author: Lyding Anrie Brumm.
 from typing import cast
 
 from nemesis.config import Config
-from nemesis.domain import WorkingDirectory, WorkingDirectoryConfig
+from nemesis.domain import WorkingDirectory, WorkingDirectoryEnv
 from nemesis.repository import Repository
 import nemesis.basic_subcommands as basic_subcommands
 import nemesis.experiment_command as experiment_command
@@ -101,11 +101,11 @@ def handle_directory_register(
     # but only when content is present, automatically add a configuration
     if content is not None:
         _hash = sha256(content.encode()).hexdigest()
-        working_directory_config = WorkingDirectoryConfig(
+        working_directory_env = WorkingDirectoryEnv(
             None, cast(int, working_directory.id), content, _hash, now()
         )
         basic_subcommands.configure_working_directory(
-            working_directory_config, repository
+            working_directory_env, repository
         )
         print("Working directory registered with configuration.")
 
@@ -129,18 +129,18 @@ def handle_directory_configure(
     elif args.interactive:
         # but if there are already configurations present use the latest
         # configuration as a template
-        configs: list[WorkingDirectoryConfig] = (
-            repository.get_working_directory_configs(wid)
+        configs: list[WorkingDirectoryEnv] = (
+            repository.get_working_directory_envs(wid)
         )
         content = editor(text="" if len(configs) == 0 else configs[-1].content)
     else:
         raise RuntimeError("Should never happend")
     _hash = sha256(content.encode()).hexdigest()
-    working_directory_config: WorkingDirectoryConfig = WorkingDirectoryConfig(
+    working_directory_env: WorkingDirectoryEnv = WorkingDirectoryEnv(
         None, wid, content, _hash, now()
     )
-    working_directory_config.id = repository.add_working_directory_config(
-        working_directory_config
+    working_directory_env.id = repository.add_working_directory_env(
+        working_directory_env
     )
 
 

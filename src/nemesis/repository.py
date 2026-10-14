@@ -13,7 +13,7 @@ from nemesis.domain import (
     Run,
     RunArtifact,
     WorkingDirectory,
-    WorkingDirectoryConfig,
+    WorkingDirectoryEnv,
 )
 from pathlib import Path
 from typing import cast
@@ -240,14 +240,14 @@ class Repository(object):
             raise RuntimeError("Can not add working directory")
         return cursor.lastrowid
 
-    def add_working_directory_config(self, wdc: WorkingDirectoryConfig) -> int:
+    def add_working_directory_env(self, wdc: WorkingDirectoryEnv) -> int:
         """
         Add a working directory configuration
         """
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO working_directory_configs (wid, content, hash, created_at)
+                INSERT INTO working_directory_envs (wid, content, hash, created_at)
                 VALUES (?, ?, ?, ?)
                 """,
                 (wdc.wid, wdc.content, wdc.hash, wdc.created_at),
@@ -287,9 +287,9 @@ class Repository(object):
                     f"Could not get working_directory of id {id}"
                 )
         wid = row[0]
-        config = self.get_working_directory_configs(wid)
+        config = self.get_working_directory_envs(wid)
         return WorkingDirectory(
-            wid, path=row[1], type=row[2], ssh_alias=row[3], config=config
+            wid, path=row[1], type=row[2], ssh_alias=row[3], env=config
         )
 
     def upsert_run_artifact(self, a: RunArtifact) -> int:
@@ -299,25 +299,23 @@ class Repository(object):
         with self._connect() as connection:
             return self.__upsert_run_artifact(connection, a)
 
-    def get_working_directory_configs(
-        self, wid: int
-    ) -> list[WorkingDirectoryConfig]:
+    def get_working_directory_envs(self, wid: int) -> list[WorkingDirectoryEnv]:
         """
         Get the latest config of a working directory in chronological order
         """
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                SELECT id, wid, content, hash, created_at FROM working_directory_configs
+                SELECT id, wid, content, hash, created_at FROM working_directory_envs
                 WHERE wid = ?
             """,
                 (wid,),
             )
             rows = cursor.fetchall()
-            result: list[WorkingDirectoryConfig] = []
+            result: list[WorkingDirectoryEnv] = []
             for row in rows:
                 result.append(
-                    WorkingDirectoryConfig(
+                    WorkingDirectoryEnv(
                         id=row[0],
                         wid=row[1],
                         content=row[2],
@@ -419,7 +417,7 @@ class Repository(object):
             if cursor.lastrowid is None:
                 raise RuntimeError("Can not create working directory table")
             cursor = connection.execute("""
-                CREATE TABLE IF NOT EXISTS working_directory_configs(
+                CREATE TABLE IF NOT EXISTS working_directory_envs(
                     id              INTEGER PRIMARY KEY,
                     wid             INTEGER NOT NULL,
                     content         TEXT NOT NULL,
@@ -447,7 +445,7 @@ class Repository(object):
             for operation in ("UPDATE", "DELETE"):
                 cursor = connection.execute(f"""
                     CREATE TRIGGER IF NOT EXISTS prevent_config_{operation.lower()}
-                    BEFORE {operation} ON working_directory_configs 
+                    BEFORE {operation} ON working_directory_envs 
                     BEGIN
                         SELECT RAISE(ABORT, 'Configuration revisions are immutable');
                     END;
@@ -499,15 +497,15 @@ class Repository(object):
             raise RuntimeError("Can not upsert run artifact")
         return id
 
-    def __add_working_directory_config(
-        self, connection: sqlite3.Connection, wdc: WorkingDirectoryConfig
+    def __add_working_directory_env(
+        self, connection: sqlite3.Connection, wde: WorkingDirectoryEnv
     ) -> int:
         cursor = connection.execute(
             """
-            INSERT INTO working_directory_configs (wid, content, hash, created_at)
+            INSERT INTO working_directory_envs (wid, content, hash, created_at)
             VALUES (?, ?, ?, ?)
             """,
-            (wdc.wid, wdc.content, wdc.hash, wdc.created_at),
+            (wde.wid, wde.content, wde.hash, wde.created_at),
         )
         if cursor.lastrowid is None:
             raise RuntimeError("Can not add working directory config")
