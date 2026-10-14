@@ -13,6 +13,7 @@ from nemesis.domain import (
     Run,
     RunArtifact,
     WorkingDirectory,
+    WorkingDirectoryConfig,
 )
 from pathlib import Path
 from typing import cast
@@ -143,9 +144,9 @@ class Repository(object):
             cursor = connection.execute(
                 """
                 INSERT INTO runs 
-                    (id, eid, end_time, start_time, description, executable, executable_hash, executable_commit, params, exit_code, status, invocation)
+                    (id, eid, end_time, start_time, description, executable, executable_hash, executable_commit, mode, params, exit_code, status, invocation)
                 VALUES
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     eid = excluded.eid,
                     end_time = excluded.end_time,
@@ -154,6 +155,7 @@ class Repository(object):
                     executable = excluded.executable,
                     executable_hash = excluded.executable_hash,
                     executable_commit = excluded.executable_commit,
+                    mode = excluded.mode,
                     params = excluded.params,
                     exit_code = excluded.exit_code,
                     status = excluded.status,
@@ -169,6 +171,7 @@ class Repository(object):
                     str(run.executable),
                     run.executable_hash,
                     run.executable_commit,
+                    run.mode,
                     run.params,
                     run.exit_code,
                     run.status,
@@ -190,7 +193,7 @@ class Repository(object):
             cursor = connection.execute(
                 """
                 SELECT 
-                    id, eid, end_time, start_time, description, executable, executable_hash, executable_commit, params, exit_code, status, invocation FROM runs
+                    id, eid, end_time, start_time, description, executable, executable_hash, executable_commit, mode, params, exit_code, status, invocation FROM runs
                 WHERE id = ?
                 """,
                 (run_id,),
@@ -207,10 +210,11 @@ class Repository(object):
             executable=row[5],
             executable_hash=row[6],
             executable_commit=row[7],
-            params=row[8],
-            exit_code=row[9],
-            status=row[10],
-            invocation=row[11],
+            mode=row[8],
+            params=row[9],
+            exit_code=row[10],
+            status=row[11],
+            invocation=row[12],
         )
         return run
 
@@ -233,8 +237,24 @@ class Repository(object):
                 ),
             )
         if cursor.lastrowid is None:
-            raise RuntimeError("Can add working directory")
+            raise RuntimeError("Can not add working directory")
         return cursor.lastrowid
+
+    def add_working_directory_config(self, wdc: WorkingDirectoryConfig) -> int:
+        """
+        Add a working directory configuration
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO working_directory_configs (wid, content, hash, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (wdc.wid, wdc.content, wdc.hash, wdc.created_at),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Can not add working directory config")
+            return cursor.lastrowid
 
     def get_wid_from_path(self, path: Path) -> int | None:
         """
@@ -266,12 +286,48 @@ class Repository(object):
                 raise RuntimeError(
                     f"Could not get working_directory of id {id}"
                 )
+        wid = row[0]
+        config = self.get_working_directory_configs(wid)
         return WorkingDirectory(
-            id=row[0],
-            path=row[1],
-            type=row[2],
-            ssh_alias=row[3],
+            wid, path=row[1], type=row[2], ssh_alias=row[3], config=config
         )
+
+    def upsert_run_artifact(self, a: RunArtifact) -> int:
+        """
+        Update run artifact
+        """
+        with self._connect() as connection:
+            return self.__upsert_run_artifact(connection, a)
+
+    def get_working_directory_configs(
+        self, wid: int
+    ) -> list[WorkingDirectoryConfig]:
+        """
+        Get the latest config of a working directory in chronological order
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT id, wid, content, hash, created_at FROM working_directory_configs
+                WHERE wid = ?
+            """,
+                (wid,),
+            )
+            rows = cursor.fetchall()
+            result: list[WorkingDirectoryConfig] = []
+            for row in rows:
+                result.append(
+                    WorkingDirectoryConfig(
+                        id=row[0],
+                        wid=row[1],
+                        content=row[2],
+                        hash=row[3],
+                        created_at=row[4],
+                    )
+                )
+            # Sort the configurations by the date of creation
+            result.sort(key=lambda x: x.created_at)
+            return result
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)
@@ -317,6 +373,7 @@ class Repository(object):
                     executable          TEXT NOT NULL,
                     executable_hash     TEXT NOT NULL,
                     executable_commit   TEXT NOT NULL,
+                    mode                TEXT NOT NULL,
                     params              TEXT,
                     exit_code           INTEGER,
                     invocation          TEXT,
@@ -345,7 +402,7 @@ class Repository(object):
                     description     TEXT NOT NULL,
                     path            TEXT NOT NULL,
                     hash            TEXT NOT NULL,
-                    FOREIGN KEY (eid) REFERENCES experiments(id)
+                    FOREIGN KEY (eid) REFERENCES experiments(id),
                     FOREIGN KEY (rid) REFERENCES runs(id)
                 )
                 """)
@@ -362,6 +419,20 @@ class Repository(object):
             if cursor.lastrowid is None:
                 raise RuntimeError("Can not create working directory table")
             cursor = connection.execute("""
+                CREATE TABLE IF NOT EXISTS working_directory_configs(
+                    id              INTEGER PRIMARY KEY,
+                    wid             INTEGER NOT NULL,
+                    content         TEXT NOT NULL,
+                    hash            TEXT NOT NULL,
+                    created_at  FLOAT NOT NULL,
+                    FOREIGN KEY (wid) REFERENCES working_directories(id)
+                )
+                """)
+            if cursor.lastrowid is None:
+                raise RuntimeError(
+                    "Can not create working directory configs table"
+                )
+            cursor = connection.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS unique_local_directory
                 ON working_directories(path)
                 WHERE ssh_alias IS NULL
@@ -373,8 +444,14 @@ class Repository(object):
                 ON working_directories(ssh_alias, path)
                 WHERE ssh_alias IS NOT NULL
                 """)
-            if cursor.lastrowid is None:
-                raise RuntimeError("Can not create unique index for remote")
+            for operation in ("UPDATE", "DELETE"):
+                cursor = connection.execute(f"""
+                    CREATE TRIGGER IF NOT EXISTS prevent_config_{operation.lower()}
+                    BEFORE {operation} ON working_directory_configs 
+                    BEGIN
+                        SELECT RAISE(ABORT, 'Configuration revisions are immutable');
+                    END;
+                """)
 
     def __upsert_run_artifact(
         self, connection: sqlite3.Connection, a: RunArtifact
@@ -396,13 +473,6 @@ class Repository(object):
         )
         id = cursor.fetchone()[0]
         return id
-
-    def upsert_run_artifact(self, a: RunArtifact) -> int:
-        """
-        Update run artifact
-        """
-        with self._connect() as connection:
-            return self.__upsert_run_artifact(connection, a)
 
     def __upsert_experiment_result(
         self, connection: sqlite3.Connection, er: ExperimentResult
@@ -428,3 +498,17 @@ class Repository(object):
         if id is None:
             raise RuntimeError("Can not upsert run artifact")
         return id
+
+    def __add_working_directory_config(
+        self, connection: sqlite3.Connection, wdc: WorkingDirectoryConfig
+    ) -> int:
+        cursor = connection.execute(
+            """
+            INSERT INTO working_directory_configs (wid, content, hash, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (wdc.wid, wdc.content, wdc.hash, wdc.created_at),
+        )
+        if cursor.lastrowid is None:
+            raise RuntimeError("Can not add working directory config")
+        return cursor.lastrowid

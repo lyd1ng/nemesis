@@ -11,15 +11,29 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class WorkingDirectoryConfig:
+    """
+    The python representation of a working directroy config
+    """
+
+    id: int | None
+    wid: int
+    content: str
+    hash: str
+    created_at: float
+
+
+@dataclass
 class WorkingDirectory:
     """
-    The python representation of a working directroy
+    The python representation of a working directory
     """
 
     id: int | None
     path: Path
     type: Literal["LOCAL"] | Literal["REMOTE"]
     ssh_alias: str | None
+    config: list[WorkingDirectoryConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -100,12 +114,6 @@ class Run:
     executable: Path
     executable_hash: str
     executable_commit: str
-    # Additional internal field without a direct relation to the database
-    # a confined
-    # A run is confined if all generated assets are compatible with the
-    # nemesis file structure (i.e. if all assets are written in a sub-directory
-    # of the cwd at execution). If a run generates assets at arbitrary
-    # paths the UNCONFINED mode has to be used.
     mode: Literal["CONFINED"] | Literal["UNCONFINED"]
     status: (
         Literal["INIT"]

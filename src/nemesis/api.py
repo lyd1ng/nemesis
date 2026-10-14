@@ -11,6 +11,7 @@ from nemesis.domain import (
     Run,
     RunArtifact,
     WorkingDirectory,
+    WorkingDirectoryConfig,
 )
 from nemesis.repository import Repository
 from nemesis.utility import (
@@ -20,12 +21,13 @@ from nemesis.utility import (
 import nemesis.filesystem as fs
 
 import time
+import tomllib
 from copy import copy
 from dataclasses import dataclass
 from typing import Unpack, cast, Literal
 from pathlib import Path
 from functools import reduce
-from collections.abc import Sequence
+from collections.abc import Sequence, Mapping
 from argparse import ArgumentParser, Namespace
 from concurrent.futures import (
     ThreadPoolExecutor,
@@ -63,26 +65,36 @@ class Api(object):
         self._exp_type: str = exp_type
         self._param_strs: list[str] = params
         self._param_types: dict[str, type] = parameter_types
-        self.polling: float = polling
-        self.params: Namespace = self._parse()
-        self.experiment: Experiment = self._init_experiment(description)
-        self.runs: list[Run] = []
-        self.result_run_data: list[ResultData] = []
-        self.run_ids_modifier_dict: dict[int, RunOptionsU] = {}
-
-        self.working_directory: WorkingDirectory = (
+        self._polling: float = polling
+        self._experiment: Experiment = self._init_experiment(description)
+        self._runs: list[Run] = []
+        self._result_run_data: list[ResultData] = []
+        self._run_ids_modifier_dict: dict[int, RunOptionsU] = {}
+        self._working_directory: WorkingDirectory = (
             self._rep.get_working_directory(self._wid)
         )
 
-        print("DEBUG: ", str(self.experiment.id))
         error_code = fs.confined_path_mkdir(
-            Path(str(self.experiment.id)), self.working_directory
+            Path(str(self._experiment.id)), self._working_directory
         )
-        print("DEBUG: ", str(error_code))
         if error_code != 0:
             raise RuntimeError(
-                f"Can not create experiment directory $working_dir/{self.experiment.id}"
+                f"Can not create experiment directory $working_dir/{self._experiment.id}"
             )
+
+        # Public interface available to the user
+        # =====================================================================
+
+        # Namespace of parameters
+        self.params: Namespace = self._parse()
+
+        # A read only interface for the parameters of the latest configuration
+        self.config: Mapping[str, object] = (
+            self._generate_parameter_dict_from_lastest_working_directory_configuration(
+                self._working_directory.config[-1]
+            )
+        )
+        # =====================================================================
 
     def _add_run(
         self,
@@ -97,13 +109,13 @@ class Api(object):
         """
         Add a run to the current experiment
         """
-        if self.experiment.id is None:
+        if self._experiment.id is None:
             raise RuntimeError(
                 "Can not add run to partially initialised experiment"
             )
         run: Run = Run(
             None,
-            self.experiment.id,
+            self._experiment.id,
             reduce(lambda a, b: a + " " + b, params),
             999,
             "",
@@ -111,8 +123,8 @@ class Api(object):
             0,
             description,
             executable,
-            fs.unconfined_hash(executable, self.working_directory),
-            fs.get_git_commit(executable, self.working_directory),
+            fs.unconfined_hash(executable, self._working_directory),
+            fs.get_git_commit(executable, self._working_directory),
             mode,
             "INIT",
             dependencies,
@@ -123,19 +135,19 @@ class Api(object):
             run.artifacts.append(
                 RunArtifact(None, run.id, Path(output), hash="")
             )
-        self.runs.append(run)
-        internal_id = len(self.runs) - 1
+        self._runs.append(run)
+        internal_id = len(self._runs) - 1
         _ = self._rep.upsert_run(run)
         # Store kwargs for later use
-        self.run_ids_modifier_dict[internal_id] = kwargs
+        self._run_ids_modifier_dict[internal_id] = kwargs
         # Create the directory for the run
         error_code = fs.confined_path_mkdir(
-            Path(str(self.experiment.id)) / Path(str(run.id)),
-            self.working_directory,
+            Path(str(self._experiment.id)) / Path(str(run.id)),
+            self._working_directory,
         )
         if error_code != 0:
             raise RuntimeError(
-                f"Can not create run directory $working_dir/{self.experiment.id}/{run.id}"
+                f"Can not create run directory $working_dir/{self._experiment.id}/{run.id}"
             )
         return internal_id
 
@@ -217,7 +229,7 @@ class Api(object):
         This way creating a run which depends on all previously added runs
         is more visual
         """
-        return list(range(len(self.runs)))
+        return list(range(len(self._runs)))
 
     def mark_artifact_as_result(
         self,
@@ -232,7 +244,7 @@ class Api(object):
         """
         result_data = ResultData(run_index, description, path)
         joint_dependency_list: list[int] = reduce(
-            lambda a, b: a + b, [run.dependencies for run in self.runs]
+            lambda a, b: a + b, [run.dependencies for run in self._runs]
         )
         if result_data.run_index in joint_dependency_list:
             raise RuntimeError(
@@ -242,16 +254,16 @@ class Api(object):
         # to experiment results form a subsets of the registered artifacts
         # of the runs. Otherwise the user messed up.
         if result_data.path not in [
-            a.path for a in self.runs[result_data.run_index].artifacts
+            a.path for a in self._runs[result_data.run_index].artifacts
         ]:
             raise RuntimeError(
                 f"Can not mark {result_data.path} as experiment result. "
                 + f"Expected result_data.source_paths of {result_data.run_index} are "
-                + f"{[a.path for a in self.runs[result_data.run_index].artifacts]}"
+                + f"{[a.path for a in self._runs[result_data.run_index].artifacts]}"
                 + f"got {result_data.path}"
             )
         data: ResultData = copy(result_data)
-        self.result_run_data.append(data)
+        self._result_run_data.append(data)
 
     def _update_status(self) -> list[int]:
         """
@@ -261,18 +273,18 @@ class Api(object):
         waiting_runs = list(
             filter(
                 lambda x: x.status == "WAITING" and len(x.dependencies) > 0,
-                self.runs,
+                self._runs,
             )
         )
         for i, run in enumerate(waiting_runs):
-            if all(self.runs[j].status == "SUCCESS" for j in run.dependencies):
+            if all(self._runs[j].status == "SUCCESS" for j in run.dependencies):
                 run.status = "INIT"
-                run_ids.append(self.runs.index(run))
+                run_ids.append(self._runs.index(run))
             elif (
                 len(
                     list(
                         filter(
-                            lambda x: self.runs[x].status
+                            lambda x: self._runs[x].status
                             in ["FAILED", "BLOCKED"],
                             run.dependencies,
                         )
@@ -281,7 +293,7 @@ class Api(object):
                 > 0
             ):
                 run.status = "BLOCKED"
-                run_ids.append(self.runs.index(run))
+                run_ids.append(self._runs.index(run))
             else:
                 pass
         return run_ids
@@ -290,14 +302,14 @@ class Api(object):
         """
         Conduct the experiment
         """
-        self.experiment.start_time = time.time()
+        self._experiment.start_time = time.time()
 
         with ThreadPoolExecutor() as executor:
             active: dict[Future[int], Run] = {}
             while True:
                 # Schedule all currently ready runs.
                 init_runs = list(
-                    filter(lambda x: x.status == "INIT", self.runs)
+                    filter(lambda x: x.status == "INIT", self._runs)
                 )
                 for r in init_runs:
                     invocation = self._get_invocation(r)
@@ -306,7 +318,7 @@ class Api(object):
                     r.status = "RUNNING"
                     _ = self._rep.upsert_run(r)
                     active[
-                        executor.submit(self._invoke, self.runs.index(r))
+                        executor.submit(self._invoke, self._runs.index(r))
                     ] = r
 
                 # Wait for one or more runs to finish.
@@ -328,14 +340,14 @@ class Api(object):
                     _ = self._rep.upsert_run(r)
                 dirty_run_ids = self._update_status()
                 for i in dirty_run_ids:
-                    _ = self._rep.upsert_run(self.runs[i])
+                    _ = self._rep.upsert_run(self._runs[i])
                 if (
                     len(
                         list(
                             filter(
                                 lambda x: x.status
                                 in ["INIT", "WAITING", "RUNNING"],
-                                self.runs,
+                                self._runs,
                             )
                         )
                     )
@@ -349,25 +361,25 @@ class Api(object):
         Add experiment results.
         """
 
-        self.experiment.status = (
+        self._experiment.status = (
             "SUCCESS"
-            if all(run.status == "SUCCESS" for run in self.runs)
+            if all(run.status == "SUCCESS" for run in self._runs)
             else "FAILED"
         )
-        if self.experiment.status == "SUCCESS":
+        if self._experiment.status == "SUCCESS":
             # If the experiment succeeded all runs succeeded as well, i.e.
             # all expected output files are present as well.
-            for result_run in self.result_run_data:
+            for result_run in self._result_run_data:
                 print(result_run.path, end=" ")
-                self.experiment.results.append(
+                self._experiment.results.append(
                     ExperimentResult(
                         None,
-                        cast(int, self.experiment.id),
-                        cast(int, self.runs[result_run.run_index].id),
+                        cast(int, self._experiment.id),
+                        cast(int, self._runs[result_run.run_index].id),
                         result_run.description,
                         result_run.path,
                         fs.confined_hash(
-                            result_run.path, self.working_directory
+                            result_run.path, self._working_directory
                         ),
                     )
                 )
@@ -375,7 +387,7 @@ class Api(object):
         else:
             # If the experiment did not succeed no results are added
             pass
-        _ = self._rep.upsert_experiment(self.experiment)
+        _ = self._rep.upsert_experiment(self._experiment)
 
     def _init_experiment(self, description: str):
         """
@@ -388,7 +400,7 @@ class Api(object):
             0,
             0,
             description,
-            reduce(lambda a, b: a + " " + b, self._param_strs),
+            reduce(lambda a, b: a + " " + b, self._param_strs, ""),
         )
         experiment.id = self._rep.upsert_experiment(experiment)
         return experiment
@@ -410,12 +422,12 @@ class Api(object):
         """
         Invoke a run
         """
-        run = self.runs[run_id]
+        run = self._runs[run_id]
         command: Sequence[str] = [str(run.executable), run.params]
         subdir = Path("")
-        options = self.run_ids_modifier_dict[run_id]
+        options = self._run_ids_modifier_dict[run_id]
         return invoke_within_wd(
-            command, subdir, self.working_directory, **options
+            command, subdir, self._working_directory, **options
         ).returncode
 
     def _catch_artifacts(self, run: Run) -> bool:
@@ -437,21 +449,21 @@ class Api(object):
             fs.confined_hash if run.mode == "CONFINED" else fs.unconfined_hash
         )
         for artifact in run.artifacts:
-            if 0 == exists(artifact.path, self.working_directory):
+            if 0 == exists(artifact.path, self._working_directory):
                 artifact.hash = calculate_hash(
-                    artifact.path, self.working_directory
+                    artifact.path, self._working_directory
                 )
 
                 if run.mode == "UNCONFINED":
                     confined_path: Path = (
-                        Path(str(self.experiment.id))
+                        Path(str(self._experiment.id))
                         / Path(str(run.id))
                         / Path(artifact.path.parts[-1])
                     )
                     error_code = fs.unconfined_cp(
                         artifact.path,
-                        self.working_directory.path / confined_path,
-                        self.working_directory,
+                        self._working_directory.path / confined_path,
+                        self._working_directory,
                     )
                     print("DEBUG > cp error: ", error_code)
                     if error_code != 0:
@@ -470,7 +482,7 @@ class Api(object):
         Get the correct invocation including redirect symbols
         """
         suffix = ""
-        options = self.run_ids_modifier_dict[self.runs.index(run)]
+        options = self._run_ids_modifier_dict[self._runs.index(run)]
         if "stdout" in options:
             suffix += f" > {options['stdout']}"
         if "stderr" in options:
@@ -478,3 +490,13 @@ class Api(object):
         invocation = str(run.executable) + " "
         invocation += run.params
         return invocation + suffix
+
+    def _generate_parameter_dict_from_lastest_working_directory_configuration(
+        self, working_directory_configuration: WorkingDirectoryConfig
+    ) -> dict[str, object]:
+        """
+        Use the latest working directory configuration to get a dictionary
+        of parameters for the user.
+        """
+        result = tomllib.loads(str(working_directory_configuration.content))
+        return result

@@ -8,12 +8,18 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
+from typing import cast
+
 from nemesis.config import Config
+from nemesis.domain import WorkingDirectory, WorkingDirectoryConfig
 from nemesis.repository import Repository
 import nemesis.basic_subcommands as basic_subcommands
 import nemesis.experiment_command as experiment_command
 
 import argparse
+from hashlib import sha256
+from editor import editor
+from time import time as now
 from pathlib import Path
 
 
@@ -78,7 +84,64 @@ def handle_experiment_run(
 def handle_directory_register(
     args: argparse.Namespace, _: Config, repository: Repository
 ):
-    basic_subcommands.register_directory(args.path, args.force, repository)
+    working_directory: WorkingDirectory = basic_subcommands.register_directory(
+        args.path, args.force, repository
+    )
+
+    content: str | None = None
+    # Either read the config from a file
+    if args.config_file:
+        content = args.config_file.read_text()
+    # or interactively
+    elif args.interactive:
+        content = editor()
+    # or not at all
+    else:
+        print("Working directory registered without configuration.")
+    # but only when content is present, automatically add a configuration
+    if content is not None:
+        _hash = sha256(content.encode()).hexdigest()
+        working_directory_config = WorkingDirectoryConfig(
+            None, cast(int, working_directory.id), content, _hash, now()
+        )
+        basic_subcommands.configure_working_directory(
+            working_directory_config, repository
+        )
+        print("Working directory registered with configuration.")
+
+
+def handle_directory_configure(
+    args: argparse.Namespace, _: Config, repository: Repository
+):
+    # Either the user specified wid directly
+    # or it has to be queried from the database
+    wid = (
+        args.wid
+        if args.wid is not None
+        else repository.get_wid_from_path(args.path)
+    )
+    if wid is None:
+        raise RuntimeError(f"Can not find wid of path {args.path}")
+    # Either read the config from a file
+    if args.config_file:
+        content = args.config_file.read_text()
+    # or interactively
+    elif args.interactive:
+        # but if there are already configurations present use the latest
+        # configuration as a template
+        configs: list[WorkingDirectoryConfig] = (
+            repository.get_working_directory_configs(wid)
+        )
+        content = editor(text="" if len(configs) == 0 else configs[-1].content)
+    else:
+        raise RuntimeError("Should never happend")
+    _hash = sha256(content.encode()).hexdigest()
+    working_directory_config: WorkingDirectoryConfig = WorkingDirectoryConfig(
+        None, wid, content, _hash, now()
+    )
+    working_directory_config.id = repository.add_working_directory_config(
+        working_directory_config
+    )
 
 
 def invoke_subcommand(config: Config, repository: Repository) -> None:
@@ -112,11 +175,29 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     directory = commands.add_parser("directory")
     directory_command = directory.add_subparsers(dest="directory_command")
     directory_register = directory_command.add_parser("register")
+    directory_configure = directory_command.add_parser("configure")
+
     _ = directory_register.add_argument("path", type=Path)
     _ = directory_register.add_argument(
         "--force", "-f", action="store_true", default=False
     )
+    group = directory_register.add_mutually_exclusive_group(required=False)
+    _ = group.add_argument(
+        "--config_file",
+        "-cf",
+        type=Path,
+    )
+    _ = group.add_argument("--interactive", "-ci", action="store_true")
     directory_register.set_defaults(handler=handle_directory_register)
 
+    group1 = directory_configure.add_mutually_exclusive_group(required=True)
+    _ = group1.add_argument("--path", type=Path, default=None)
+    _ = group1.add_argument("--wid", type=int)
+    group2 = directory_configure.add_mutually_exclusive_group(required=True)
+    _ = group2.add_argument("--config_file", "-cf", type=Path, default=None)
+    _ = group2.add_argument("--interactive", "-ci", action="store_true")
+    directory_configure.set_defaults(handler=handle_directory_configure)
+
     args = parser.parse_args()
+    print(vars(args))
     args.handler(args, config, repository)
