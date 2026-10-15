@@ -76,11 +76,12 @@ class Repository(object):
             cursor = connection.execute(
                 """
                 INSERT INTO experiments
-                    (id, wid, type, start_time, end_time, description, params, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, wid, weid, type, start_time, end_time, description, params, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     type = excluded.type,
                     wid = excluded.wid,
+                    weid = excluded.weid,
                     start_time = excluded.start_time,
                     end_time = excluded.end_time,
                     description = excluded.description,
@@ -91,6 +92,7 @@ class Repository(object):
                 (
                     ex.id,
                     ex.wid,
+                    ex.weid,
                     ex.type,
                     ex.start_time,
                     ex.end_time,
@@ -106,7 +108,7 @@ class Repository(object):
                 result.id = self.__upsert_experiment_result(connection, result)
             return id
 
-    def get_list_of_experiments(self) -> list[str]:
+    def get_list_of_experiment_names(self) -> list[str]:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -303,7 +305,7 @@ class Repository(object):
 
     def get_working_directory_envs(self, wid: int) -> list[WorkingDirectoryEnv]:
         """
-        Get the latest config of a working directory in chronological order
+        Get the configs of a working directory in chronological order
         """
         with self._connect() as connection:
             cursor = connection.execute(
@@ -354,6 +356,7 @@ class Repository(object):
                 CREATE TABLE IF NOT EXISTS experiments (
                     id          INTEGER PRIMARY KEY,
                     wid         INTEGER,
+                    weid         INTEGER,
                     type TEXT NOT NULL,
                     end_time    FLOAT,
                     start_time  FLOAT,
@@ -362,6 +365,7 @@ class Repository(object):
                     mark        TEXT,
                     status      TEXT NOT NULL CHECK (status in ('INIT', 'RUNNING', 'FAILED', 'SUCCESS')),
                     FOREIGN KEY (wid) REFERENCES working_directories(id)
+                    FOREIGN KEY (weid) REFERENCES working_directory_envs(id)
                 )
                 """)
             if cursor.lastrowid is None:

@@ -65,14 +65,15 @@ class Api(object):
         self._param_strs: list[str] = params
         self._param_types: dict[str, type] = parameter_types
         self._polling: float = polling
-        self._experiment: Experiment = self._init_experiment(description)
         self._runs: list[Run] = []
         self._result_run_data: list[ResultData] = []
         self._run_ids_modifier_dict: dict[int, RunOptionsU] = {}
         self._working_directory: WorkingDirectory = (
             self._rep.get_working_directory(self._wid)
         )
+        self._weid: int = cast(int, self._working_directory.env[-1].id)
 
+        self._experiment: Experiment = self._init_experiment(description)
         error_code = fs.confined_path_mkdir(
             Path(str(self._experiment.id)), self._working_directory
         )
@@ -395,6 +396,7 @@ class Api(object):
         experiment: Experiment = Experiment(
             None,
             self._wid,
+            self._weid,
             self._exp_type,
             0,
             0,

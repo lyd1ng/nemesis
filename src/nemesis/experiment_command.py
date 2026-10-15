@@ -50,7 +50,7 @@ def experiment_list(rep: Repository) -> int:
     """
     List all experiment descriptions
     """
-    print(rep.get_list_of_experiments())
+    print(rep.get_list_of_experiment_names())
     return 0
 
 

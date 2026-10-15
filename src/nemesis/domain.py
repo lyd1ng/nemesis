@@ -62,6 +62,7 @@ class Experiment:
 
     id: int | None
     wid: int
+    weid: int
     type: str
     end_time: float
     start_time: float
