@@ -46,8 +46,7 @@ class ResultData:
 
 class Api(object):
     """
-    Defines the API used in nemesis experiment
-    description files.
+    Defines the API used in nemesis experiment description files.
     """
 
     def __init__(

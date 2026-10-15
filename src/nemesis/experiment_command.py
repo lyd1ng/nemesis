@@ -7,9 +7,10 @@ Author: Lyding Anrie Brumm.
 
 from nemesis.constants import VERSION
 from nemesis.repository import Repository
-from nemesis.domain import ExperimentTemplate
+from nemesis.domain import ExperimentTemplate, WorkingDirectoryEnv
 from nemesis.experiment_module import ExperimentModule
 from nemesis.api import Api
+from nemesis.sandbox_api import SandboxApi
 from nemesis.utility import calculate_local_hash
 
 import importlib.util
@@ -18,42 +19,13 @@ from pathlib import Path
 from subprocess import run as invoke
 
 
-def _load_experiment_module(path: Path) -> tuple[ExperimentModule, str]:
-    """
-    Load an experiment description from a user specified module at path.
-    Only the name is realy read from the python file.
-    """
-    spec = importlib.util.spec_from_file_location(
-        "nemesis_experiment",
-        path,
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load experiment from {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    em = cast(ExperimentModule, module.experiment_module)
-    return em, calculate_local_hash(path)
-
-
-def _load_experiment_description(path: Path) -> ExperimentTemplate:
-    """
-    Load an experiment description from a user specified module at path.
-    Only the name is realy read from the python file.
-    """
-    em, _hash = _load_experiment_module(path)
-    name = em.name
-    return ExperimentTemplate(
-        type=name, path=path, hash=_hash, api_version=VERSION
-    )
-
-
 def experiment_register(
     path: Path, experiment_description_path: Path, rep: Repository
 ) -> int:
     """
-    Register an experiment description.
+    Register an experiment description if it passes some basic sanity checks.
     """
-    ed = _load_experiment_description(path)
+    em, ed = _load_experiment_description(path)
     _ = invoke(
         [
             "cp",
@@ -61,6 +33,7 @@ def experiment_register(
             str(experiment_description_path / Path(ed.type + ".py")),
         ]
     )
+    _verify_experiment(em)
     return rep.add_experiment_template(ed)
 
 
@@ -102,9 +75,83 @@ def experiment_run(
     if ed.hash != _hash:
         raise RuntimeError("Detected post-registration tempering")
     # The whole API is defined within the ExperimentContext,
-    ec = Api(rep, wid, type, description, params, em.parameters)
+    api = Api(rep, wid, type, description, params, em.parameters)
     # For all the logic happens in the module and here simply
     # all three hooks are invoked
-    em.setup(ec)
-    ec._conduct()  # pyright: ignore[reportPrivateUsage]
-    ec._postconduct()  # pyright: ignore[reportPrivateUsage]
+    em.setup(api)
+    api._conduct()  # pyright: ignore[reportPrivateUsage]
+    api._postconduct()  # pyright: ignore[reportPrivateUsage]
+
+
+def _load_experiment_module(path: Path) -> tuple[ExperimentModule, str]:
+    """
+    Load an experiment description from a user specified module at path.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "nemesis_experiment",
+        path,
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load experiment from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    em = cast(ExperimentModule, module.experiment_module)
+    return em, calculate_local_hash(path)
+
+
+def _load_experiment_description(
+    path: Path,
+) -> tuple[ExperimentModule, ExperimentTemplate]:
+    """
+    Load an experiment description from a user specified module at path.
+    Only the name is really read from the python file.
+    """
+    em, _hash = _load_experiment_module(path)
+    name = em.name
+    return em, ExperimentTemplate(
+        type=name, path=path, hash=_hash, api_version=VERSION
+    )
+
+
+def _check_working_directory_compatability(
+    em: ExperimentModule, wde: WorkingDirectoryEnv
+) -> tuple[bool, str]:
+    # Check if the requirements of the experiment module are satisfied
+    # by the working directory environment and generate an error message
+    # otherwise
+    fulfilled = True
+    missing_variables: list[str] = []
+    wrongly_typed_variables: list[tuple[str, type, type]] = []
+    for _type, name in em.requires:
+        if name not in wde.variables.keys():
+            fulfilled = False
+            missing_variables.append(name)
+        else:
+            if not isinstance(wde.variables[name], _type):
+                fulfilled = False
+                wrongly_typed_variables.append(
+                    (name, type(wde.variables[name]), _type)
+                )
+    error_msg = ""
+    if len(missing_variables) > 0:
+        error_msg += f"The variables {missing_variables} are not provided by the environment\n"
+    for name, got, expected in wrongly_typed_variables:
+        error_msg += (
+            f"Variable {name} is of type {got} but {expected} was expected.\n"
+        )
+    assert (
+        fulfilled == True
+        and len(error_msg) == 0
+        or fulfilled == False
+        and len(error_msg) > 0
+    ), "Assert missmatch between fulfilled and error message"
+    return (fulfilled, error_msg)
+
+
+def _verify_experiment(em: ExperimentModule):
+    """
+    Verifies an experiment using a sanbox api
+    """
+    sapi = SandboxApi(em.requires)
+    em.setup(sapi)
+    sapi._verify()  # pyright: ignore[reportPrivateUsage]

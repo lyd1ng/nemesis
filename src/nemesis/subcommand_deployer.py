@@ -8,6 +8,7 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
+import tomllib
 from typing import cast
 
 from nemesis.config import Config
@@ -102,7 +103,12 @@ def handle_directory_register(
     if content is not None:
         _hash = sha256(content.encode()).hexdigest()
         working_directory_env = WorkingDirectoryEnv(
-            None, cast(int, working_directory.id), content, _hash, now()
+            id=None,
+            wid=cast(int, working_directory.id),
+            content=content,
+            hash=_hash,
+            created_at=now(),
+            variables=tomllib.loads(content),
         )
         basic_subcommands.configure_working_directory(
             working_directory_env, repository
@@ -137,7 +143,7 @@ def handle_directory_configure(
         raise RuntimeError("Should never happend")
     _hash = sha256(content.encode()).hexdigest()
     working_directory_env: WorkingDirectoryEnv = WorkingDirectoryEnv(
-        None, wid, content, _hash, now()
+        None, wid, content, _hash, now(), tomllib.loads(content)
     )
     working_directory_env.id = repository.add_working_directory_env(
         working_directory_env

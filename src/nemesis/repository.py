@@ -6,6 +6,8 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
+import tomllib
+
 from nemesis.domain import (
     ExperimentResult,
     ExperimentTemplate,
@@ -321,9 +323,12 @@ class Repository(object):
                         content=row[2],
                         hash=row[3],
                         created_at=row[4],
+                        variables=tomllib.loads(row[2]),
                     )
                 )
             # Sort the configurations by the date of creation
+            # this way the latest configuration is a position -1,
+            # as god intended
             result.sort(key=lambda x: x.created_at)
             return result
 

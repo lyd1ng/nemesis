@@ -5,6 +5,7 @@ Date:   20261004
 Author: Lyding Anrie Brumm.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
 from dataclasses import dataclass, field
@@ -21,6 +22,9 @@ class WorkingDirectoryEnv:
     content: str
     hash: str
     created_at: float
+    # An additional field with no directr correpondence in the database
+    # it contains the parsed toml file
+    variables: Mapping[str, object]
 
 
 @dataclass
