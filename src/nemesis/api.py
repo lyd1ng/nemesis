@@ -82,7 +82,7 @@ class Api(object):
                 f"Can not create experiment directory $working_dir/{self._experiment.id}"
             )
 
-        # Public interface available to the user
+        # Public interface objects available to the user
         # =====================================================================
 
         # Namespace of parameters
@@ -95,61 +95,6 @@ class Api(object):
             )
         )
         # =====================================================================
-
-    def _add_run(
-        self,
-        description: str,
-        executable: Path,
-        params: list[str],
-        dependencies: list[int],
-        outputs: list[str],
-        mode: Literal["CONFINED"] | Literal["UNCONFINED"],
-        **kwargs: Unpack[RunOptionsU],
-    ) -> int:
-        """
-        Add a run to the current experiment
-        """
-        if self._experiment.id is None:
-            raise RuntimeError(
-                "Can not add run to partially initialised experiment"
-            )
-        run: Run = Run(
-            None,
-            self._experiment.id,
-            reduce(lambda a, b: a + " " + b, params),
-            999,
-            "",
-            0,
-            0,
-            description,
-            executable,
-            fs.unconfined_hash(executable, self._working_directory),
-            fs.get_git_commit(executable, self._working_directory),
-            mode,
-            "INIT",
-            dependencies,
-        )
-        run.status = "INIT" if len(dependencies) == 0 else "WAITING"
-        run.id = self._rep.upsert_run(run)
-        for output in outputs:
-            run.artifacts.append(
-                RunArtifact(None, run.id, Path(output), hash="")
-            )
-        self._runs.append(run)
-        internal_id = len(self._runs) - 1
-        _ = self._rep.upsert_run(run)
-        # Store kwargs for later use
-        self._run_ids_modifier_dict[internal_id] = kwargs
-        # Create the directory for the run
-        error_code = fs.confined_path_mkdir(
-            Path(str(self._experiment.id)) / Path(str(run.id)),
-            self._working_directory,
-        )
-        if error_code != 0:
-            raise RuntimeError(
-                f"Can not create run directory $working_dir/{self._experiment.id}/{run.id}"
-            )
-        return internal_id
 
     def add_confined_run(
         self,
@@ -264,6 +209,61 @@ class Api(object):
             )
         data: ResultData = copy(result_data)
         self._result_run_data.append(data)
+
+    def _add_run(
+        self,
+        description: str,
+        executable: Path,
+        params: list[str],
+        dependencies: list[int],
+        outputs: list[str],
+        mode: Literal["CONFINED"] | Literal["UNCONFINED"],
+        **kwargs: Unpack[RunOptionsU],
+    ) -> int:
+        """
+        Add a run to the current experiment
+        """
+        if self._experiment.id is None:
+            raise RuntimeError(
+                "Can not add run to partially initialised experiment"
+            )
+        run: Run = Run(
+            None,
+            self._experiment.id,
+            reduce(lambda a, b: a + " " + b, params),
+            999,
+            "",
+            0,
+            0,
+            description,
+            executable,
+            fs.unconfined_hash(executable, self._working_directory),
+            fs.get_git_commit(executable, self._working_directory),
+            mode,
+            "INIT",
+            dependencies,
+        )
+        run.status = "INIT" if len(dependencies) == 0 else "WAITING"
+        run.id = self._rep.upsert_run(run)
+        for output in outputs:
+            run.artifacts.append(
+                RunArtifact(None, run.id, Path(output), hash="")
+            )
+        self._runs.append(run)
+        internal_id = len(self._runs) - 1
+        _ = self._rep.upsert_run(run)
+        # Store kwargs for later use
+        self._run_ids_modifier_dict[internal_id] = kwargs
+        # Create the directory for the run
+        error_code = fs.confined_path_mkdir(
+            Path(str(self._experiment.id)) / Path(str(run.id)),
+            self._working_directory,
+        )
+        if error_code != 0:
+            raise RuntimeError(
+                f"Can not create run directory $working_dir/{self._experiment.id}/{run.id}"
+            )
+        return internal_id
 
     def _update_status(self) -> list[int]:
         """
