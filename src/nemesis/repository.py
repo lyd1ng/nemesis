@@ -49,24 +49,43 @@ class Repository(object):
             raise RuntimeError("Can not create experiment template")
         return cursor.lastrowid
 
-    def get_experiment_description(self, name: str) -> ExperimentTemplate:
+    def add_working_directory(self, working_directory: WorkingDirectory):
+        """
+        Add a new working directory to the db
+        """
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                SELECT name, path, hash, api_version FROM experiment_templates WHERE
-                    name=?
+                INSERT INTO working_directories 
+                    (path, type, ssh_alias)
+                VALUES
+                    (?, ?, ?)
                 """,
-                (name,),
+                (
+                    str(working_directory.path),
+                    working_directory.type,
+                    working_directory.ssh_alias,
+                ),
             )
-            row = cursor.fetchone()
-            if row is None:
-                raise RuntimeError("Experiment template could not be fetched")
-            return ExperimentTemplate(
-                type=str(row[0]),
-                path=Path(row[1]),
-                hash=row[2],
-                api_version=row[3],
+        if cursor.lastrowid is None:
+            raise RuntimeError("Can not add working directory")
+        return cursor.lastrowid
+
+    def add_working_directory_env(self, wdc: WorkingDirectoryEnv) -> int:
+        """
+        Add a working directory configuration
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO working_directory_envs (wid, content, hash, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (wdc.wid, wdc.content, wdc.hash, wdc.created_at),
             )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Can not add working directory config")
+            return cursor.lastrowid
 
     def upsert_experiment(self, ex: Experiment):
         """
@@ -107,37 +126,6 @@ class Repository(object):
             for result in ex.results:
                 result.id = self.__upsert_experiment_result(connection, result)
             return id
-
-    def get_list_of_experiment_names(self) -> list[str]:
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT name FROM experiment_descriptions ORDER BY name
-                """,
-            )
-            return [row[0] for row in cursor.fetchall()]
-
-    def experiment_list_runs(self, ex: Experiment):
-        """
-        Returns a list of all runs of an experiment
-        """
-        run_ids: list[tuple[int,]] = []
-        runs: list[Run] = []
-        if ex.id is None:
-            raise RuntimeError(
-                "Can not list runs of partially initialised experiment"
-            )
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                SELECT id from runs WHERE eid = ?
-            """,
-                (ex.id,),
-            )
-            run_ids = cursor.fetchall()
-            for run_id in run_ids:
-                runs.append(self.get_run(run_id[0]))
-        return runs
 
     def upsert_run(self, run: Run) -> int:
         """
@@ -189,6 +177,104 @@ class Repository(object):
                 artifact.id = self.__upsert_run_artifact(connection, artifact)
         return run_id
 
+    def upsert_run_artifact(self, a: RunArtifact) -> int:
+        """
+        Update run artifact
+        """
+        with self._connect() as connection:
+            return self.__upsert_run_artifact(connection, a)
+
+    def get_wds(self) -> list[int]:
+        """
+        Get a list of all working directories
+        """
+        result: list[int] = []
+        with self._connect() as connection:
+            cursor = connection.execute("SELECT id from working_directories")
+            wids: list[tuple[int]] = cursor.fetchall()
+        for wid in wids:
+            result.append(wid[0])
+        return result
+
+    def get_latest_wdes(self):
+        """
+        Get a list of all latest working directory environments
+        """
+        result: list[WorkingDirectoryEnv] = []
+        wds = self.get_wds()
+        for wd in wds:
+            result.append(self.get_working_directory_envs(wd)[-1])
+        return result
+
+    def get_experiment_run_ids(self, ex: Experiment):
+        """
+        Returns a list of all runs of an experiment
+        """
+        run_ids: list[tuple[int,]] = []
+        runs: list[Run] = []
+        if ex.id is None:
+            raise RuntimeError(
+                "Can not list runs of partially initialised experiment"
+            )
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT id from runs WHERE eid = ?
+            """,
+                (ex.id,),
+            )
+            run_ids = cursor.fetchall()
+            for run_id in run_ids:
+                runs.append(self.get_run(run_id[0]))
+        return runs
+
+    def get_wid_from_path(self, path: Path) -> int | None:
+        """
+        Get the wid of a path or None if it not yet registered
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+            SELECT id from working_directories WHERE path=?
+            """,
+                (str(path),),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+        return cast(int, row[0])
+
+    def get_working_directory(self, wid: int) -> WorkingDirectory:
+        """
+        Get working directory with id=wid
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+            SELECT id, path, type, ssh_alias from working_directories WHERE id=?
+            """,
+                (wid,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"Could not get working_directory of id {wid}"
+                )
+        wid = row[0]
+        config = self.get_working_directory_envs(wid)
+        return WorkingDirectory(
+            wid, path=row[1], type=row[2], ssh_alias=row[3], env=config
+        )
+
+    def get_list_of_experiment_names(self) -> list[str]:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT name FROM experiment_descriptions ORDER BY name
+                """,
+            )
+            return [row[0] for row in cursor.fetchall()]
+
     def get_run(self, run_id: int) -> Run:
         """
         Get an run object from an id
@@ -222,86 +308,24 @@ class Repository(object):
         )
         return run
 
-    def add_working_directory(self, working_directory: WorkingDirectory):
-        """
-        Add a new working directory to the db
-        """
+    def get_experiment_description(self, name: str) -> ExperimentTemplate:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO working_directories 
-                    (path, type, ssh_alias)
-                VALUES
-                    (?, ?, ?)
+                SELECT name, path, hash, api_version FROM experiment_templates WHERE
+                    name=?
                 """,
-                (
-                    str(working_directory.path),
-                    working_directory.type,
-                    working_directory.ssh_alias,
-                ),
-            )
-        if cursor.lastrowid is None:
-            raise RuntimeError("Can not add working directory")
-        return cursor.lastrowid
-
-    def add_working_directory_env(self, wdc: WorkingDirectoryEnv) -> int:
-        """
-        Add a working directory configuration
-        """
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-                INSERT INTO working_directory_envs (wid, content, hash, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (wdc.wid, wdc.content, wdc.hash, wdc.created_at),
-            )
-            if cursor.lastrowid is None:
-                raise RuntimeError("Can not add working directory config")
-            return cursor.lastrowid
-
-    def get_wid_from_path(self, path: Path) -> int | None:
-        """
-        Get the wid of a path or None if it not yet registered
-        """
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-            SELECT id from working_directories WHERE path=?
-            """,
-                (str(path),),
+                (name,),
             )
             row = cursor.fetchone()
             if row is None:
-                return None
-        return cast(int, row[0])
-
-    def get_working_directory(self, id: int) -> WorkingDirectory:
-        """ """
-        with self._connect() as connection:
-            cursor = connection.execute(
-                """
-            SELECT id, path, type, ssh_alias from working_directories WHERE id=?
-            """,
-                (id,),
+                raise RuntimeError("Experiment template could not be fetched")
+            return ExperimentTemplate(
+                type=str(row[0]),
+                path=Path(row[1]),
+                hash=row[2],
+                api_version=row[3],
             )
-            row = cursor.fetchone()
-            if row is None:
-                raise RuntimeError(
-                    f"Could not get working_directory of id {id}"
-                )
-        wid = row[0]
-        config = self.get_working_directory_envs(wid)
-        return WorkingDirectory(
-            wid, path=row[1], type=row[2], ssh_alias=row[3], env=config
-        )
-
-    def upsert_run_artifact(self, a: RunArtifact) -> int:
-        """
-        Update run artifact
-        """
-        with self._connect() as connection:
-            return self.__upsert_run_artifact(connection, a)
 
     def get_working_directory_envs(self, wid: int) -> list[WorkingDirectoryEnv]:
         """
@@ -505,17 +529,3 @@ class Repository(object):
         if id is None:
             raise RuntimeError("Can not upsert run artifact")
         return id
-
-    def __add_working_directory_env(
-        self, connection: sqlite3.Connection, wde: WorkingDirectoryEnv
-    ) -> int:
-        cursor = connection.execute(
-            """
-            INSERT INTO working_directory_envs (wid, content, hash, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (wde.wid, wde.content, wde.hash, wde.created_at),
-        )
-        if cursor.lastrowid is None:
-            raise RuntimeError("Can not add working directory config")
-        return cursor.lastrowid

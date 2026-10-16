@@ -34,6 +34,15 @@ def experiment_register(
         ]
     )
     _verify_experiment(em)
+    # Also check if there is a at least one working directory this
+    # experiment is compatible to
+    wdes: list[WorkingDirectoryEnv] = rep.get_latest_wdes()
+    if not any(
+        [_check_working_directory_compatability(em, wde)[0] for wde in wdes]
+    ):
+        raise RuntimeError(
+            "Experiment is not compatible to any working directory."
+        )
     return rep.add_experiment_template(ed)
 
 
