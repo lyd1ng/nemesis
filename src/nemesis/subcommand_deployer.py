@@ -82,6 +82,28 @@ def handle_experiment_run(
     )
 
 
+def handle_experiment_check(
+    args: argparse.Namespace,
+    config: Config,
+    repository: Repository,
+):
+    """
+    Handle the experiment ceck command
+    """
+    wid: int | None = (
+        args.wid
+        if args.wid is not None
+        else repository.get_wid_from_path(args.path)
+    )
+    if wid is None:
+        raise RuntimeError(
+            f"Can not run experiment, {args.path} is not registered"
+        )
+    experiment_command.experiment_check(
+        args.type, wid, config.experiment_description_path, repository
+    )
+
+
 def handle_directory_register(
     args: argparse.Namespace, _: Config, repository: Repository
 ):
@@ -157,53 +179,67 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     to the parameter list of the subcommand and the subcommand is invoked.
     """
     parser = argparse.ArgumentParser(prog="nemesis")
-
     commands = parser.add_subparsers(dest="command", required=True)
+
+    # ============  EXPERIMENT COMMAND ========================================
     experiment = commands.add_parser("experiment")
     experiment_command = experiment.add_subparsers(dest="experiment_command")
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     experiment_register = experiment_command.add_parser("register")
     _ = experiment_register.add_argument("file", type=Path)
-    experiment_register.set_defaults(handler=handle_experiment_register)
+    _ = experiment_register.set_defaults(handler=handle_experiment_register)
+
     experiment_show = experiment_command.add_parser("show")
     _ = experiment_show.add_argument("name", type=str)
-    experiment_show.set_defaults(handler=handle_experiment_show)
+    _ = experiment_show.set_defaults(handler=handle_experiment_show)
+
     experiment_list = experiment_command.add_parser("list")
-    experiment_list.set_defaults(handler=handle_experiment_list)
+    _ = experiment_list.set_defaults(handler=handle_experiment_list)
+
     experiment_run = experiment_command.add_parser("run")
     _ = experiment_run.add_argument("name", type=str)
-    group = experiment_run.add_mutually_exclusive_group(required=True)
-    _ = group.add_argument("--path", type=Path)
-    _ = group.add_argument("--wid", type=int)
+    g = experiment_run.add_mutually_exclusive_group(required=True)
+    _ = g.add_argument("--path", type=Path)
+    _ = g.add_argument("--wid", type=int)
     _ = experiment_run.add_argument("--description", "-d", type=str)
     _ = experiment_run.add_argument("params", type=str, nargs="*")
-    experiment_run.set_defaults(handler=handle_experiment_run)
+    _ = experiment_run.set_defaults(handler=handle_experiment_run)
 
+    experiment_check = experiment_command.add_parser("check")
+    _ = experiment_check.add_argument("type", type=str)
+    g = experiment_check.add_mutually_exclusive_group(required=True)
+    _ = g.add_argument("--path", type=Path)
+    _ = g.add_argument("--wid", type=int)
+    _ = experiment_check.set_defaults(handler=handle_experiment_check)
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    # ============  DIRECTORY COMMAND =========================================
     directory = commands.add_parser("directory")
     directory_command = directory.add_subparsers(dest="directory_command")
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     directory_register = directory_command.add_parser("register")
-    directory_configure = directory_command.add_parser("configure")
-
     _ = directory_register.add_argument("path", type=Path)
     _ = directory_register.add_argument(
         "--force", "-f", action="store_true", default=False
     )
-    group = directory_register.add_mutually_exclusive_group(required=False)
-    _ = group.add_argument(
+    g = directory_register.add_mutually_exclusive_group(required=False)
+    _ = g.add_argument(
         "--config_file",
         "-cf",
         type=Path,
     )
-    _ = group.add_argument("--interactive", "-ci", action="store_true")
+    _ = g.add_argument("--interactive", "-ci", action="store_true")
     directory_register.set_defaults(handler=handle_directory_register)
 
-    group1 = directory_configure.add_mutually_exclusive_group(required=True)
-    _ = group1.add_argument("--path", type=Path, default=None)
-    _ = group1.add_argument("--wid", type=int)
-    group2 = directory_configure.add_mutually_exclusive_group(required=True)
-    _ = group2.add_argument("--config_file", "-cf", type=Path, default=None)
-    _ = group2.add_argument("--interactive", "-ci", action="store_true")
+    directory_configure = directory_command.add_parser("configure")
+    g = directory_configure.add_mutually_exclusive_group(required=True)
+    _ = g.add_argument("--path", type=Path, default=None)
+    _ = g.add_argument("--wid", type=int)
+    g = directory_configure.add_mutually_exclusive_group(required=True)
+    _ = g.add_argument("--config_file", "-cf", type=Path, default=None)
+    _ = g.add_argument("--interactive", "-ci", action="store_true")
     directory_configure.set_defaults(handler=handle_directory_configure)
 
     args = parser.parse_args()
-    print(vars(args))
     args.handler(args, config, repository)

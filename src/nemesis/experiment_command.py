@@ -92,6 +92,28 @@ def experiment_run(
     api._postconduct()  # pyright: ignore[reportPrivateUsage]
 
 
+def experiment_check(
+    type: str, wid: int, experiment_description_path: Path, rep: Repository
+):
+    """
+    Check if a given experiment is compatible with the latest environment
+    of a working directroy
+    """
+    et: ExperimentTemplate = rep.get_experiment_description(type)
+    em, _hash = _load_experiment_module(
+        experiment_description_path / Path(et.path)
+    )
+    if et.hash != _hash:
+        raise RuntimeError("Detected post-registration tempering")
+    wde = rep.get_working_directory_envs(wid)[-1]
+    compatible, msg = _check_working_directory_compatability(em, wde)
+    if not compatible:
+        print(f"Experiment {type} is not compatible with {wid}.")
+        print(msg)
+    else:
+        print(f"Experiment {type} is compatible with {wid}.")
+
+
 def _load_experiment_module(path: Path) -> tuple[ExperimentModule, str]:
     """
     Load an experiment description from a user specified module at path.
