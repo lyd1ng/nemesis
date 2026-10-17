@@ -105,7 +105,7 @@ def experiment_check(
     )
     if et.hash != _hash:
         raise RuntimeError("Detected post-registration tempering")
-    wde = rep.get_working_directory_envs(wid)[-1]
+    wde = rep.get_wdes(wid)[-1]
     compatible, msg = _check_working_directory_compatability(em, wde)
     if not compatible:
         print(f"Experiment {type} is not compatible with {wid}.")
@@ -183,6 +183,6 @@ def _verify_experiment(em: ExperimentModule):
     """
     Verifies an experiment using a sanbox api
     """
-    sapi = SandboxApi(em.requires)
+    sapi = SandboxApi(em.requires, em.parameters)
     em.setup(sapi)
     sapi._verify()  # pyright: ignore[reportPrivateUsage]

@@ -11,6 +11,7 @@ Author: Lyding Anrie Brumm.
 import tomllib
 from typing import cast
 
+from nemesis import show_command
 from nemesis.config import Config
 from nemesis.domain import WorkingDirectory, WorkingDirectoryEnv
 from nemesis.repository import Repository
@@ -157,9 +158,7 @@ def handle_directory_configure(
     elif args.interactive:
         # but if there are already configurations present use the latest
         # configuration as a template
-        configs: list[WorkingDirectoryEnv] = (
-            repository.get_working_directory_envs(wid)
-        )
+        configs: list[WorkingDirectoryEnv] = repository.get_wdes(wid)
         content = editor(text="" if len(configs) == 0 else configs[-1].content)
     else:
         raise RuntimeError("Should never happend")
@@ -170,6 +169,36 @@ def handle_directory_configure(
     working_directory_env.id = repository.add_working_directory_env(
         working_directory_env
     )
+
+
+def handle_show_experiment(
+    args: argparse.Namespace, _: Config, repository: Repository
+):
+    """
+    Show experiments
+    """
+    ids: list[int] = args.ids
+    for eid in ids:
+        show_command.show_experiment(eid, repository)
+        print("")
+
+
+def handle_show_wd(args: argparse.Namespace, _: Config, repository: Repository):
+    """
+    Show working directories
+    """
+    show_full_history: bool = args.full_history
+    # Fist interprete the specified path
+    wid: int | None = (
+        args.wid
+        if args.wid is not None
+        else repository.get_wid_from_path(args.path)
+    )
+    if wid is None:
+        raise RuntimeError(
+            f"Can not run experiment, {args.path} is not registered"
+        )
+    show_command.show_wd(wid, show_full_history, repository)
 
 
 def invoke_subcommand(config: Config, repository: Repository) -> None:
@@ -190,12 +219,12 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     _ = experiment_register.add_argument("file", type=Path)
     _ = experiment_register.set_defaults(handler=handle_experiment_register)
 
-    experiment_show = experiment_command.add_parser("show")
-    _ = experiment_show.add_argument("name", type=str)
-    _ = experiment_show.set_defaults(handler=handle_experiment_show)
-
-    experiment_list = experiment_command.add_parser("list")
-    _ = experiment_list.set_defaults(handler=handle_experiment_list)
+    experiment_check = experiment_command.add_parser("check")
+    _ = experiment_check.add_argument("type", type=str)
+    g = experiment_check.add_mutually_exclusive_group(required=True)
+    _ = g.add_argument("--path", type=Path)
+    _ = g.add_argument("--wid", type=int)
+    _ = experiment_check.set_defaults(handler=handle_experiment_check)
 
     experiment_run = experiment_command.add_parser("run")
     _ = experiment_run.add_argument("name", type=str)
@@ -206,18 +235,11 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     _ = experiment_run.add_argument("params", type=str, nargs="*")
     _ = experiment_run.set_defaults(handler=handle_experiment_run)
 
-    experiment_check = experiment_command.add_parser("check")
-    _ = experiment_check.add_argument("type", type=str)
-    g = experiment_check.add_mutually_exclusive_group(required=True)
-    _ = g.add_argument("--path", type=Path)
-    _ = g.add_argument("--wid", type=int)
-    _ = experiment_check.set_defaults(handler=handle_experiment_check)
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
     # ============  DIRECTORY COMMAND =========================================
     directory = commands.add_parser("directory")
     directory_command = directory.add_subparsers(dest="directory_command")
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     directory_register = directory_command.add_parser("register")
     _ = directory_register.add_argument("path", type=Path)
     _ = directory_register.add_argument(
@@ -240,6 +262,24 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     _ = g.add_argument("--config_file", "-cf", type=Path, default=None)
     _ = g.add_argument("--interactive", "-ci", action="store_true")
     directory_configure.set_defaults(handler=handle_directory_configure)
+
+    # ============  SHOW COMMAND ==============================================
+    show = commands.add_parser("show")
+    show_command = show.add_subparsers(dest="show_command")
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    show_experiment = show_command.add_parser("experiment")
+    _ = show_experiment.add_argument("ids", type=int, nargs="*")
+    show_experiment.set_defaults(handler=handle_show_experiment)
+
+    show_wd = show_command.add_parser("wd")
+    g = show_wd.add_mutually_exclusive_group(required=True)
+    _ = g.add_argument("--path", type=Path, default=None)
+    _ = g.add_argument("--wid", type=int)
+    _ = show_wd.add_argument(
+        "--full_history", default=False, action="store_true"
+    )
+    show_wd.set_defaults(handler=handle_show_wd)
 
     args = parser.parse_args()
     args.handler(args, config, repository)

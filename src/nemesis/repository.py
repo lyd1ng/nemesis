@@ -203,8 +203,37 @@ class Repository(object):
         result: list[WorkingDirectoryEnv] = []
         wds = self.get_wds()
         for wd in wds:
-            result.append(self.get_working_directory_envs(wd)[-1])
+            result.append(self.get_wdes(wd)[-1])
         return result
+
+    def get_experiment(self, eid: int) -> Experiment:
+        """
+        Get an experiment from its eid
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT wid, weid, type, end_time, start_time, description, params, status, mark FROM experiments WHERE id = ?
+                """,
+                (eid,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError(f"Can not get experiment with id={eid}")
+            experiment: Experiment = Experiment(
+                id=eid,
+                wid=row[0],
+                weid=row[1],
+                type=row[2],
+                end_time=row[3],
+                start_time=row[4],
+                description=row[5],
+                params=row[6],
+                status=row[7],
+                results=[],
+                mark=row[8],
+            )
+        return experiment
 
     def get_experiment_run_ids(self, ex: Experiment):
         """
@@ -261,7 +290,7 @@ class Repository(object):
                     f"Could not get working_directory of id {wid}"
                 )
         wid = row[0]
-        config = self.get_working_directory_envs(wid)
+        config = self.get_wdes(wid)
         return WorkingDirectory(
             wid, path=row[1], type=row[2], ssh_alias=row[3], env=config
         )
@@ -327,7 +356,7 @@ class Repository(object):
                 api_version=row[3],
             )
 
-    def get_working_directory_envs(self, wid: int) -> list[WorkingDirectoryEnv]:
+    def get_wdes(self, wid: int) -> list[WorkingDirectoryEnv]:
         """
         Get the configs of a working directory in chronological order
         """
@@ -357,6 +386,51 @@ class Repository(object):
             # as god intended
             result.sort(key=lambda x: x.created_at)
             return result
+
+    def get_experiment_result(self, id: int) -> ExperimentResult:
+        """
+        Get an experiment result from a result id
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT eid, rid, description, path, hash from experiment_results where id=?
+                """,
+                (id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"Can not get experiment result with id {id}"
+                )
+            return ExperimentResult(
+                id,
+                eid=row[0],
+                rid=row[1],
+                description=row[2],
+                path=Path(row[3]),
+                hash=row[4],
+            )
+
+    def get_experiment_results(self, eid: int) -> list[ExperimentResult]:
+        """
+        Get a list of all results of a specifid experiment
+        """
+        rids: list[int] = []
+        results: list[ExperimentResult] = []
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                SELECT id from experiment_results where eid=?
+                """,
+                (eid,),
+            )
+            row = cursor.fetchall()
+            for entry in row:
+                rids.append(entry[0])
+            for rid in rids:
+                results.append(self.get_experiment_result(rid))
+        return results
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path)

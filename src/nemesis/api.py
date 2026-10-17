@@ -367,10 +367,10 @@ class Api(object):
             else "FAILED"
         )
         if self._experiment.status == "SUCCESS":
+            self._experiment.end_time = time.time()
             # If the experiment succeeded all runs succeeded as well, i.e.
             # all expected output files are present as well.
             for result_run in self._result_run_data:
-                print(result_run.path, end=" ")
                 self._experiment.results.append(
                     ExperimentResult(
                         None,

@@ -75,7 +75,7 @@ class Experiment:
         | Literal["SUCCESS"]
     ) = "INIT"
     results: list[ExperimentResult] = field(default_factory=list)
-    mark: str = ""
+    mark: str | None = ""
 
 
 @dataclass
