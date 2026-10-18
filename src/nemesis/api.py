@@ -201,8 +201,8 @@ class Api(object):
         # Check if the names of the artifacts which should be lifted
         # to experiment results form a subsets of the registered artifacts
         # of the runs. Otherwise the user messed up.
-        if result_data.path.name not in [
-            str(a.path) for a in self._runs[result_data.run_index].artifacts
+        if result_data.path not in [
+            a.path for a in self._runs[result_data.run_index].artifacts
         ]:
             raise RuntimeError(
                 f"Can not mark {result_data.path} as experiment result. "
@@ -248,9 +248,10 @@ class Api(object):
         )
         run.status = "INIT" if len(dependencies) == 0 else "WAITING"
         run.id = self._rep.upsert_run(run)
+        prefix = Path(str(self._experiment.id)) / Path(str(run.id))
         for output in outputs:
             run.artifacts.append(
-                RunArtifact(None, run.id, Path(output), hash="")
+                RunArtifact(None, run.id, prefix / Path(output), hash="")
             )
         self._runs.append(run)
         internal_id = len(self._runs) - 1
@@ -454,15 +455,14 @@ class Api(object):
         calculate_hash = (
             fs.confined_hash if run.mode == "CONFINED" else fs.unconfined_hash
         )
-        prefix = Path(str(self._experiment.id)) / Path(str(run.id))
         for artifact in run.artifacts:
-            if 0 == exists(prefix / artifact.path, self._working_directory):
+            if 0 == exists(artifact.path, self._working_directory):
                 artifact.hash = calculate_hash(
-                    prefix / artifact.path, self._working_directory
+                    artifact.path, self._working_directory
                 )
 
                 if run.mode == "UNCONFINED":
-                    confined_path: Path = prefix / Path(artifact.path.parts[-1])
+                    confined_path: Path = Path(artifact.path.parts[-1])
                     error_code = fs.unconfined_cp(
                         artifact.path,
                         self._working_directory.path / confined_path,
