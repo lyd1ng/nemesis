@@ -45,12 +45,13 @@ def invoke_within_wd(
     working_directory.
     """
     cwd = working_directory.path / subdir
+    print(f"DEBUG: INVOKATION UNDER {str(cwd)}")
     if working_directory.type == "LOCAL":
         options: RunOptions = RunOptions()
         if "stdout" in kwargs:
-            options["stdout"] = Path(kwargs["stdout"]).open("w")
+            options["stdout"] = (subdir / Path(kwargs["stdout"])).open("w")
         if "stderr" in kwargs:
-            options["stderr"] = Path(kwargs["stderr"]).open("w")
+            options["stderr"] = (subdir / Path(kwargs["stderr"])).open("w")
         capture_output = kwargs["capture"] if "capture" in kwargs else False
         result = subprocess.run(
             command, cwd=cwd, capture_output=capture_output, **options

@@ -187,7 +187,10 @@ class Api(object):
         a result. A run qualifies to produce a result if there is no
         other run depending on it.
         """
-        result_data = ResultData(run_index, description, path)
+        prefix = Path(str(self._experiment.id)) / Path(
+            str(self._runs[run_index].id)
+        )
+        result_data = ResultData(run_index, description, prefix / path)
         joint_dependency_list: list[int] = reduce(
             lambda a, b: a + b, [run.dependencies for run in self._runs]
         )
@@ -198,8 +201,8 @@ class Api(object):
         # Check if the names of the artifacts which should be lifted
         # to experiment results form a subsets of the registered artifacts
         # of the runs. Otherwise the user messed up.
-        if result_data.path not in [
-            a.path for a in self._runs[result_data.run_index].artifacts
+        if result_data.path.name not in [
+            str(a.path) for a in self._runs[result_data.run_index].artifacts
         ]:
             raise RuntimeError(
                 f"Can not mark {result_data.path} as experiment result. "
@@ -425,7 +428,9 @@ class Api(object):
         """
         run = self._runs[run_id]
         command: Sequence[str] = [str(run.executable), run.params]
-        subdir = Path("")
+        subdir = Path(str(self._experiment.id)) / Path(
+            str(self._runs[run_id].id)
+        )
         options = self._run_ids_modifier_dict[run_id]
         return invoke_within_wd(
             command, subdir, self._working_directory, **options
@@ -449,24 +454,20 @@ class Api(object):
         calculate_hash = (
             fs.confined_hash if run.mode == "CONFINED" else fs.unconfined_hash
         )
+        prefix = Path(str(self._experiment.id)) / Path(str(run.id))
         for artifact in run.artifacts:
-            if 0 == exists(artifact.path, self._working_directory):
+            if 0 == exists(prefix / artifact.path, self._working_directory):
                 artifact.hash = calculate_hash(
-                    artifact.path, self._working_directory
+                    prefix / artifact.path, self._working_directory
                 )
 
                 if run.mode == "UNCONFINED":
-                    confined_path: Path = (
-                        Path(str(self._experiment.id))
-                        / Path(str(run.id))
-                        / Path(artifact.path.parts[-1])
-                    )
+                    confined_path: Path = prefix / Path(artifact.path.parts[-1])
                     error_code = fs.unconfined_cp(
                         artifact.path,
                         self._working_directory.path / confined_path,
                         self._working_directory,
                     )
-                    print("DEBUG > cp error: ", error_code)
                     if error_code != 0:
                         raise RuntimeError("Can not confine unconfined asset")
                     artifact.path = confined_path

@@ -6,6 +6,7 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
+from functools import reduce
 import tomllib
 
 from nemesis.domain import (
@@ -234,6 +235,24 @@ class Repository(object):
                 mark=row[8],
             )
         return experiment
+
+    def get_experiment_ids(
+        self, filter: list[tuple[str, str, str]]
+    ) -> list[int]:
+        """
+        Get experiment ids subject to various filters
+        """
+        prefix = "SELECT id from experiments tables WHERE "
+        query = reduce(
+            lambda a, b: a + " AND " + b,
+            [f"{entry[0]}{entry[1]}?" for entry in filter],
+        )
+        with self._connect() as connection:
+            cursor = connection.execute(
+                prefix + query, list(map(lambda x: x[2], filter))
+            )
+            rows = cursor.fetchall()
+        return list(map(lambda r: r[0], rows))
 
     def get_experiment_run_ids(self, ex: Experiment):
         """

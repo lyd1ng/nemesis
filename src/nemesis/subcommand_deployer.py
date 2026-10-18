@@ -11,7 +11,7 @@ Author: Lyding Anrie Brumm.
 import tomllib
 from typing import cast
 
-from nemesis import show_command
+from nemesis import query_command, show_command
 from nemesis.config import Config
 from nemesis.domain import WorkingDirectory, WorkingDirectoryEnv
 from nemesis.repository import Repository
@@ -201,6 +201,31 @@ def handle_show_wd(args: argparse.Namespace, _: Config, repository: Repository):
     show_command.show_wd(wid, show_full_history, repository)
 
 
+def handle_query_experiments(
+    args: argparse.Namespace, _: Config, repository: Repository
+):
+    """
+    Handle the query experiment command
+    """
+    eids = []
+    filters: list[tuple[str, str, str]] = []
+    for filter_string in args.filter_strings:
+        matches: int = 0
+        operators: list[str] = ["=", "!=", ">", "<", ">=", "<=", "is", "is not"]
+        operator: str = ""
+        for op in operators:
+            if op in filter_string:
+                matches += 1
+                operator = op
+        if matches > 1:
+            raise RuntimeError(f"More then one operator ({matches}) detected!")
+        words: list[str] = filter_string.split(operator)
+        filters.append((words[0], operator, words[1]))
+        eids = query_command.query_experiments(filters, repository)
+    for eid in eids:
+        print(eid)
+
+
 def invoke_subcommand(config: Config, repository: Repository) -> None:
     """
     Calls the parse and invoke layer for a given subcommand.
@@ -280,6 +305,15 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
         "--full_history", default=False, action="store_true"
     )
     show_wd.set_defaults(handler=handle_show_wd)
+
+    # ============ QUERY COMMAND ==============================================
+    query = commands.add_parser("query")
+    query_command = query.add_subparsers(dest="query_command")
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    query_experiment = query_command.add_parser("experiment")
+    _ = query_experiment.add_argument("filter_strings", type=str, nargs="*")
+    query_experiment.set_defaults(handler=handle_query_experiments)
 
     args = parser.parse_args()
     args.handler(args, config, repository)
