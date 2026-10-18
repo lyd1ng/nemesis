@@ -276,9 +276,9 @@ class Repository(object):
                 runs.append(self.get_run(run_id[0]))
         return runs
 
-    def get_wid_from_path(self, path: Path) -> int | None:
+    def get_wid_from_path(self, path: Path) -> int:
         """
-        Get the wid of a path or None if it not yet registered
+        Get the wid of a path
         """
         with self._connect() as connection:
             cursor = connection.execute(
@@ -289,8 +289,10 @@ class Repository(object):
             )
             row = cursor.fetchone()
             if row is None:
-                return None
-        return cast(int, row[0])
+                raise RuntimeError(
+                    f"Can not get wid from {path}. Not registered?"
+                )
+        return row[0]
 
     def get_working_directory(self, wid: int) -> WorkingDirectory:
         """

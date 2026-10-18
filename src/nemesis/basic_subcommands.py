@@ -23,8 +23,6 @@ def register_directory(
     and only if is empty or force was specified.
     If the path contains a colon it is interpreted as a remote directory.
     """
-    if repository.get_wid_from_path(path) is not None:
-        raise RuntimeError("Can not register already registered directory")
     # TODO: IMPLEMENT REMOTE EMPTY CHECK
     # If no colon is found the diectory to register is local
     if str(path).find(":") == -1:

@@ -25,6 +25,21 @@ from time import time as now
 from pathlib import Path
 
 
+def resolve_wd_path(path: Path, repository: Repository) -> int:
+    """
+    WD paths are either specified as a regular path, or
+    through a leading ":" followed by the wid.
+    E.g.
+        ./foo/bar/baz
+        :1
+    are both valid specifications
+    """
+    if str(path)[0] == ":":
+        return int(str(path)[1:])
+    else:
+        return repository.get_wid_from_path(path)
+
+
 def handle_experiment_register(
     args: argparse.Namespace, config: Config, repository: Repository
 ):
@@ -40,7 +55,7 @@ def handle_experiment_show(
     args: argparse.Namespace, _0: Config, repository: Repository
 ):
     """
-    Hanlde the experiment show command
+    Handle the experiment show command
     """
     _ = experiment_command.experiment_show(args.name, repository)
 
@@ -49,7 +64,7 @@ def handle_experiment_list(
     _0: argparse.Namespace, _1: Config, repository: Repository
 ):
     """
-    Hanlde the experiment list command
+    Handle the experiment list command
     """
     _ = experiment_command.experiment_list(repository)
 
@@ -62,16 +77,7 @@ def handle_experiment_run(
     """
     Handle the experiment run command
     """
-    # Fist interprete the specified path
-    wid: int | None = (
-        args.wid
-        if args.wid is not None
-        else repository.get_wid_from_path(args.path)
-    )
-    if wid is None:
-        raise RuntimeError(
-            f"Can not run experiment, {args.path} is not registered"
-        )
+    wid = resolve_wd_path(args.path, repository)
 
     _ = experiment_command.experiment_run(
         wid,
@@ -91,15 +97,7 @@ def handle_experiment_check(
     """
     Handle the experiment ceck command
     """
-    wid: int | None = (
-        args.wid
-        if args.wid is not None
-        else repository.get_wid_from_path(args.path)
-    )
-    if wid is None:
-        raise RuntimeError(
-            f"Can not run experiment, {args.path} is not registered"
-        )
+    wid = resolve_wd_path(args.path, repository)
     experiment_command.experiment_check(
         args.type, wid, config.experiment_description_path, repository
     )
@@ -142,15 +140,7 @@ def handle_directory_register(
 def handle_directory_configure(
     args: argparse.Namespace, _: Config, repository: Repository
 ):
-    # Either the user specified wid directly
-    # or it has to be queried from the database
-    wid = (
-        args.wid
-        if args.wid is not None
-        else repository.get_wid_from_path(args.path)
-    )
-    if wid is None:
-        raise RuntimeError(f"Can not find wid of path {args.path}")
+    wid = resolve_wd_path(args.path, repository)
     # Either read the config from a file
     if args.config_file:
         content = args.config_file.read_text()
@@ -178,8 +168,11 @@ def handle_show_experiment(
     Show experiments
     """
     ids: list[int] = args.ids
+    fields: list[str] = args.fields_string.split(",")
+    if len(fields) == 1 and len(fields[0]) == 0:
+        fields = []
     for eid in ids:
-        show_command.show_experiment(eid, repository)
+        show_command.show_experiment(eid, fields, repository)
         print("")
 
 
@@ -187,17 +180,8 @@ def handle_show_wd(args: argparse.Namespace, _: Config, repository: Repository):
     """
     Show working directories
     """
+    wid = resolve_wd_path(args.path, repository)
     show_full_history: bool = args.full_history
-    # Fist interprete the specified path
-    wid: int | None = (
-        args.wid
-        if args.wid is not None
-        else repository.get_wid_from_path(args.path)
-    )
-    if wid is None:
-        raise RuntimeError(
-            f"Can not run experiment, {args.path} is not registered"
-        )
     show_command.show_wd(wid, show_full_history, repository)
 
 
@@ -246,17 +230,13 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
 
     experiment_check = experiment_command.add_parser("check")
     _ = experiment_check.add_argument("type", type=str)
-    g = experiment_check.add_mutually_exclusive_group(required=True)
-    _ = g.add_argument("--path", type=Path)
-    _ = g.add_argument("--wid", type=int)
+    _ = experiment_check.add_argument("path", type=Path)
     _ = experiment_check.set_defaults(handler=handle_experiment_check)
 
     experiment_run = experiment_command.add_parser("run")
-    _ = experiment_run.add_argument("name", type=str)
-    g = experiment_run.add_mutually_exclusive_group(required=True)
-    _ = g.add_argument("--path", type=Path)
-    _ = g.add_argument("--wid", type=int)
     _ = experiment_run.add_argument("--description", "-d", type=str)
+    _ = experiment_run.add_argument("name", type=str)
+    _ = experiment_run.add_argument("path", type=Path)
     _ = experiment_run.add_argument("params", type=str, nargs="*")
     _ = experiment_run.set_defaults(handler=handle_experiment_run)
 
@@ -280,9 +260,7 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     directory_register.set_defaults(handler=handle_directory_register)
 
     directory_configure = directory_command.add_parser("configure")
-    g = directory_configure.add_mutually_exclusive_group(required=True)
-    _ = g.add_argument("--path", type=Path, default=None)
-    _ = g.add_argument("--wid", type=int)
+    _ = directory_configure.add_argument("path", type=Path)
     g = directory_configure.add_mutually_exclusive_group(required=True)
     _ = g.add_argument("--config_file", "-cf", type=Path, default=None)
     _ = g.add_argument("--interactive", "-ci", action="store_true")
@@ -294,13 +272,12 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     show_experiment = show_command.add_parser("experiment")
+    _ = show_experiment.add_argument("--fields_string", type=str, default="")
     _ = show_experiment.add_argument("ids", type=int, nargs="*")
     show_experiment.set_defaults(handler=handle_show_experiment)
 
     show_wd = show_command.add_parser("wd")
-    g = show_wd.add_mutually_exclusive_group(required=True)
-    _ = g.add_argument("--path", type=Path, default=None)
-    _ = g.add_argument("--wid", type=int)
+    _ = experiment_check.add_argument("path", type=Path)
     _ = show_wd.add_argument(
         "--full_history", default=False, action="store_true"
     )
