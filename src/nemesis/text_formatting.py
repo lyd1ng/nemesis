@@ -94,7 +94,6 @@ class TextFormatter(object):
         # because the add_heading function does the trick
         # and the with block is merely used a way to represent
         # the indentation in the python code as well
-        # print(f"DEBUG: ENTERING {self.current_level}")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):

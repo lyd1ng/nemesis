@@ -31,9 +31,9 @@ class Repository(object):
     If kept as a module this would be an awkward global variable.
     """
 
-    def __init__(self, db_path: Path | None):
-        self.db_path: Path | None = db_path
-        if db_path is not None:
+    def __init__(self, db_path: Path):
+        self.db_path: Path = db_path
+        if db_path != Path(""):
             self._initialize()
 
     def add_experiment_template(self, ed: ExperimentTemplate):
@@ -492,7 +492,6 @@ class Repository(object):
     def _connect(self) -> sqlite3.Connection:
         if self.db_path is None:
             raise RuntimeError("Trying to connect to NONE")
-        print(f"DEBUG: DB PATH = {self.db_path}")
         connection = sqlite3.connect(self.db_path)
         _ = connection.execute("PRAGMA foreign_keys = ON")
         return connection

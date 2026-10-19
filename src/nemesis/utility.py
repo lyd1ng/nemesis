@@ -45,7 +45,6 @@ def invoke_within_wd(
     working_directory.
     """
     cwd = working_directory.path / subdir
-    print(f"DEBUG: INVOKATION UNDER {str(cwd)}")
     if working_directory.type == "LOCAL":
         options: RunOptions = RunOptions()
         if "stdout" in kwargs:
@@ -72,7 +71,6 @@ def invoke_within_wd(
         if "stderr" in kwargs:
             remote_command += f" 2> {kwargs['stderr']}"
         capture_output = kwargs["capture"] if "capture" in kwargs else False
-        print("DEBUG: Invoking", "ssh", ssh_alias, remote_command)
         result = subprocess.run(
             ["ssh", ssh_alias, remote_command], capture_output=capture_output
         )

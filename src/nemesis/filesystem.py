@@ -211,9 +211,6 @@ def _hash(path: Path, wd: WorkingDirectory) -> str:
             wd,
             capture=True,
         )
-        print("DEBUG: ", result.returncode)
-        print("DEBUG: ", result.stdout)
-        print("DEBUG: ", result.stderr)
         result.check_returncode()
         return str(result.stdout)
     else:

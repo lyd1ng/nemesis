@@ -8,6 +8,7 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
+from collections.abc import Callable
 import subprocess
 import tomllib
 from typing import cast
@@ -26,7 +27,25 @@ from time import time as now
 from pathlib import Path
 from getpass import getuser
 
+# Global variable for the experiment description file.
+# Set from invoke_subcommand at least if nemesis was registered.
 edf_path: Path = Path("")
+
+
+def with_initialization_check(
+    func: Callable[[argparse.Namespace, Repository], None],
+):
+    """
+    Checks if nemesis was already initialised.
+    I.e. if edf_path was set
+    """
+
+    def inner(args: argparse.Namespace, repository: Repository) -> None:
+        if edf_path == Path(""):
+            raise RuntimeError("Nemesis initialization required")
+        func(args, repository)
+
+    return inner
 
 
 def resolve_wd_path(path: Path, repository: Repository) -> int:
@@ -48,11 +67,11 @@ def handle_init(args: argparse.Namespace, repository: Repository):
     """
     Initialise nemesis
     """
-    if not args.nemesis_path.absolute():
+    if not args.nemesis_path.is_absolute():
         raise RuntimeError("Can not initialise nemesis under relative path.")
     if BOOTSTRAP_PATH.exists():
         raise RuntimeError("Can not initialise nemesis; already initialized.")
-    if repository.db_path is not None:
+    if repository.db_path != Path(""):
         raise RuntimeError("Somehow a repository is already initialized.")
     _ = BOOTSTRAP_PATH.write_text(str(args.nemesis_path))
     _ = subprocess.run(["chmod", "2770", str(args.nemesis_path)])
@@ -65,6 +84,7 @@ def handle_init(args: argparse.Namespace, repository: Repository):
     _ = subprocess.run(["chmod", "770", str(repository.db_path)])
 
 
+@with_initialization_check
 def handle_experiment_register(
     args: argparse.Namespace, repository: Repository
 ):
@@ -74,6 +94,7 @@ def handle_experiment_register(
     _ = experiment_command.experiment_register(args.file, edf_path, repository)
 
 
+@with_initialization_check
 def handle_experiment_show(args: argparse.Namespace, repository: Repository):
     """
     Handle the experiment show command
@@ -81,6 +102,7 @@ def handle_experiment_show(args: argparse.Namespace, repository: Repository):
     _ = experiment_command.experiment_show(args.name, repository)
 
 
+@with_initialization_check
 def handle_experiment_list(_0: argparse.Namespace, repository: Repository):
     """
     Handle the experiment list command
@@ -88,6 +110,7 @@ def handle_experiment_list(_0: argparse.Namespace, repository: Repository):
     _ = experiment_command.experiment_list(repository)
 
 
+@with_initialization_check
 def handle_experiment_run(
     args: argparse.Namespace,
     repository: Repository,
@@ -108,6 +131,7 @@ def handle_experiment_run(
     )
 
 
+@with_initialization_check
 def handle_experiment_check(
     args: argparse.Namespace,
     repository: Repository,
@@ -119,6 +143,7 @@ def handle_experiment_check(
     experiment_command.experiment_check(args.type, wid, edf_path, repository)
 
 
+@with_initialization_check
 def handle_directory_register(args: argparse.Namespace, repository: Repository):
     working_directory: WorkingDirectory = basic_subcommands.register_directory(
         args.path, args.force, repository
@@ -151,6 +176,7 @@ def handle_directory_register(args: argparse.Namespace, repository: Repository):
         print("Working directory registered with configuration.")
 
 
+@with_initialization_check
 def handle_directory_configure(
     args: argparse.Namespace, repository: Repository
 ):
@@ -175,6 +201,7 @@ def handle_directory_configure(
     )
 
 
+@with_initialization_check
 def handle_show_experiment(args: argparse.Namespace, repository: Repository):
     """
     Show experiments
@@ -188,6 +215,7 @@ def handle_show_experiment(args: argparse.Namespace, repository: Repository):
         print("")
 
 
+@with_initialization_check
 def handle_show_wd(args: argparse.Namespace, repository: Repository):
     """
     Show working directories
@@ -197,6 +225,7 @@ def handle_show_wd(args: argparse.Namespace, repository: Repository):
     show_command.show_wd(wid, show_full_history, repository)
 
 
+@with_initialization_check
 def handle_show_user(args: argparse.Namespace, repository: Repository):
     """
     Show a specified user
@@ -204,6 +233,7 @@ def handle_show_user(args: argparse.Namespace, repository: Repository):
     show_command.show_user(args.name, repository)
 
 
+@with_initialization_check
 def handle_query_experiments(args: argparse.Namespace, repository: Repository):
     """
     Handle the query experiment command
@@ -227,6 +257,7 @@ def handle_query_experiments(args: argparse.Namespace, repository: Repository):
         print(eid)
 
 
+@with_initialization_check
 def handle_user_register(args: argparse.Namespace, repository: Repository):
     """
     Register a user
@@ -235,7 +266,7 @@ def handle_user_register(args: argparse.Namespace, repository: Repository):
     _ = repository.upsert_user(user)
 
 
-def invoke_subcommand(repository: Repository, _edf_path: Path | None) -> None:
+def invoke_subcommand(repository: Repository, _edf_path: Path) -> None:
     """
     Calls the parse and invoke layer for a given subcommand.
     This way the command line interface arguments are parsed according
@@ -245,17 +276,11 @@ def invoke_subcommand(repository: Repository, _edf_path: Path | None) -> None:
     parser = argparse.ArgumentParser(prog="nemesis")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    # If the _edf_path is none i.e. if the bootstrap file does not exists
-    # only one command is allowed, which is the nemesis init command
-    if _edf_path is None:
-        # ============  INIT COMMAND ==========================================
-        init = commands.add_parser("init")
-        _ = init.add_argument("nemesis_path", type=Path)
-        init.set_defaults(handler=handle_init)
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        args = parser.parse_args()
-        args.handler(args, repository)
-        return
+    # ============  INIT COMMAND ==========================================
+    init = commands.add_parser("init")
+    _ = init.add_argument("nemesis_path", type=Path)
+    init.set_defaults(handler=handle_init)
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     edf_path = _edf_path
     # Once nemesis was initialised all commands but nemesis init are possible
