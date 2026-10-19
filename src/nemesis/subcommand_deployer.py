@@ -8,12 +8,13 @@ Date:   20261002
 Author: Lyding Anrie Brumm.
 """
 
+import subprocess
 import tomllib
 from typing import cast
 
 from nemesis import query_command, show_command
-from nemesis.config import Config
-from nemesis.domain import WorkingDirectory, WorkingDirectoryEnv
+from nemesis.constants import BOOTSTRAP_PATH
+from nemesis.domain import User, WorkingDirectory, WorkingDirectoryEnv
 from nemesis.repository import Repository
 import nemesis.basic_subcommands as basic_subcommands
 import nemesis.experiment_command as experiment_command
@@ -23,6 +24,9 @@ from hashlib import sha256
 from editor import editor
 from time import time as now
 from pathlib import Path
+from getpass import getuser
+
+edf_path: Path = Path("")
 
 
 def resolve_wd_path(path: Path, repository: Repository) -> int:
@@ -40,29 +44,44 @@ def resolve_wd_path(path: Path, repository: Repository) -> int:
         return repository.get_wid_from_path(path)
 
 
+def handle_init(args: argparse.Namespace, repository: Repository):
+    """
+    Initialise nemesis
+    """
+    if not args.nemesis_path.absolute():
+        raise RuntimeError("Can not initialise nemesis under relative path.")
+    if BOOTSTRAP_PATH.exists():
+        raise RuntimeError("Can not initialise nemesis; already initialized.")
+    if repository.db_path is not None:
+        raise RuntimeError("Somehow a repository is already initialized.")
+    _ = BOOTSTRAP_PATH.write_text(str(args.nemesis_path))
+    _ = subprocess.run(["chmod", "2770", str(args.nemesis_path)])
+    _ = subprocess.run(["chgrp", "nemesis", str(args.nemesis_path)])
+    edf_path = args.nemesis_path / Path("edf")
+    edf_path.mkdir(exist_ok=False)
+    _ = subprocess.run(["chmod", "2770", str(edf_path)])
+
+    repository = Repository(args.nemesis_path / Path("nemesis.db"))
+    _ = subprocess.run(["chmod", "770", str(repository.db_path)])
+
+
 def handle_experiment_register(
-    args: argparse.Namespace, config: Config, repository: Repository
+    args: argparse.Namespace, repository: Repository
 ):
     """
     Handle the experiment register command
     """
-    _ = experiment_command.experiment_register(
-        args.file, config.experiment_description_path, repository
-    )
+    _ = experiment_command.experiment_register(args.file, edf_path, repository)
 
 
-def handle_experiment_show(
-    args: argparse.Namespace, _0: Config, repository: Repository
-):
+def handle_experiment_show(args: argparse.Namespace, repository: Repository):
     """
     Handle the experiment show command
     """
     _ = experiment_command.experiment_show(args.name, repository)
 
 
-def handle_experiment_list(
-    _0: argparse.Namespace, _1: Config, repository: Repository
-):
+def handle_experiment_list(_0: argparse.Namespace, repository: Repository):
     """
     Handle the experiment list command
     """
@@ -71,7 +90,6 @@ def handle_experiment_list(
 
 def handle_experiment_run(
     args: argparse.Namespace,
-    config: Config,
     repository: Repository,
 ):
     """
@@ -82,30 +100,26 @@ def handle_experiment_run(
     _ = experiment_command.experiment_run(
         wid,
         args.name,
+        getuser(),
         args.description,
         args.params,
-        config.experiment_description_path,
+        edf_path,
         repository,
     )
 
 
 def handle_experiment_check(
     args: argparse.Namespace,
-    config: Config,
     repository: Repository,
 ):
     """
     Handle the experiment ceck command
     """
     wid = resolve_wd_path(args.path, repository)
-    experiment_command.experiment_check(
-        args.type, wid, config.experiment_description_path, repository
-    )
+    experiment_command.experiment_check(args.type, wid, edf_path, repository)
 
 
-def handle_directory_register(
-    args: argparse.Namespace, _: Config, repository: Repository
-):
+def handle_directory_register(args: argparse.Namespace, repository: Repository):
     working_directory: WorkingDirectory = basic_subcommands.register_directory(
         args.path, args.force, repository
     )
@@ -138,7 +152,7 @@ def handle_directory_register(
 
 
 def handle_directory_configure(
-    args: argparse.Namespace, _: Config, repository: Repository
+    args: argparse.Namespace, repository: Repository
 ):
     wid = resolve_wd_path(args.path, repository)
     # Either read the config from a file
@@ -161,9 +175,7 @@ def handle_directory_configure(
     )
 
 
-def handle_show_experiment(
-    args: argparse.Namespace, _: Config, repository: Repository
-):
+def handle_show_experiment(args: argparse.Namespace, repository: Repository):
     """
     Show experiments
     """
@@ -176,7 +188,7 @@ def handle_show_experiment(
         print("")
 
 
-def handle_show_wd(args: argparse.Namespace, _: Config, repository: Repository):
+def handle_show_wd(args: argparse.Namespace, repository: Repository):
     """
     Show working directories
     """
@@ -185,9 +197,14 @@ def handle_show_wd(args: argparse.Namespace, _: Config, repository: Repository):
     show_command.show_wd(wid, show_full_history, repository)
 
 
-def handle_query_experiments(
-    args: argparse.Namespace, _: Config, repository: Repository
-):
+def handle_show_user(args: argparse.Namespace, repository: Repository):
+    """
+    Show a specified user
+    """
+    show_command.show_user(args.name, repository)
+
+
+def handle_query_experiments(args: argparse.Namespace, repository: Repository):
     """
     Handle the query experiment command
     """
@@ -210,15 +227,38 @@ def handle_query_experiments(
         print(eid)
 
 
-def invoke_subcommand(config: Config, repository: Repository) -> None:
+def handle_user_register(args: argparse.Namespace, repository: Repository):
+    """
+    Register a user
+    """
+    user: User = User(name=getuser(), alias=args.alias, email=args.email)
+    _ = repository.upsert_user(user)
+
+
+def invoke_subcommand(repository: Repository, _edf_path: Path | None) -> None:
     """
     Calls the parse and invoke layer for a given subcommand.
     This way the command line interface arguments are parsed according
     to the parameter list of the subcommand and the subcommand is invoked.
     """
+    global edf_path
     parser = argparse.ArgumentParser(prog="nemesis")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    # If the _edf_path is none i.e. if the bootstrap file does not exists
+    # only one command is allowed, which is the nemesis init command
+    if _edf_path is None:
+        # ============  INIT COMMAND ==========================================
+        init = commands.add_parser("init")
+        _ = init.add_argument("nemesis_path", type=Path)
+        init.set_defaults(handler=handle_init)
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        args = parser.parse_args()
+        args.handler(args, repository)
+        return
+
+    edf_path = _edf_path
+    # Once nemesis was initialised all commands but nemesis init are possible
     # ============  EXPERIMENT COMMAND ========================================
     experiment = commands.add_parser("experiment")
     experiment_command = experiment.add_subparsers(dest="experiment_command")
@@ -266,6 +306,16 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     _ = g.add_argument("--interactive", "-ci", action="store_true")
     directory_configure.set_defaults(handler=handle_directory_configure)
 
+    # ============  USER COMMAND ==============================================
+    user = commands.add_parser("user")
+    user_command = user.add_subparsers(dest="user_command")
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    user_register = user_command.add_parser("register")
+    _ = user_register.add_argument("alias", type=str)
+    _ = user_register.add_argument("email", type=str)
+    user_register.set_defaults(handler=handle_user_register)
+
     # ============  SHOW COMMAND ==============================================
     show = commands.add_parser("show")
     show_command = show.add_subparsers(dest="show_command")
@@ -277,11 +327,15 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     show_experiment.set_defaults(handler=handle_show_experiment)
 
     show_wd = show_command.add_parser("wd")
-    _ = experiment_check.add_argument("path", type=Path)
+    _ = show_wd.add_argument("path", type=Path)
     _ = show_wd.add_argument(
         "--full_history", default=False, action="store_true"
     )
     show_wd.set_defaults(handler=handle_show_wd)
+
+    show_user = show_command.add_parser("user")
+    _ = show_user.add_argument("name", type=str)
+    show_user.set_defaults(handler=handle_show_user)
 
     # ============ QUERY COMMAND ==============================================
     query = commands.add_parser("query")
@@ -293,4 +347,4 @@ def invoke_subcommand(config: Config, repository: Repository) -> None:
     query_experiment.set_defaults(handler=handle_query_experiments)
 
     args = parser.parse_args()
-    args.handler(args, config, repository)
+    args.handler(args, repository)

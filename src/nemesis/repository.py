@@ -15,11 +15,11 @@ from nemesis.domain import (
     Experiment,
     Run,
     RunArtifact,
+    User,
     WorkingDirectory,
     WorkingDirectoryEnv,
 )
 from pathlib import Path
-from typing import cast
 import sqlite3
 
 
@@ -31,9 +31,10 @@ class Repository(object):
     If kept as a module this would be an awkward global variable.
     """
 
-    def __init__(self, db_path: Path):
-        self.db_path: Path = db_path
-        self._initialize()
+    def __init__(self, db_path: Path | None):
+        self.db_path: Path | None = db_path
+        if db_path is not None:
+            self._initialize()
 
     def add_experiment_template(self, ed: ExperimentTemplate):
         with self._connect() as connection:
@@ -96,12 +97,13 @@ class Repository(object):
             cursor = connection.execute(
                 """
                 INSERT INTO experiments
-                    (id, wid, weid, type, start_time, end_time, description, params, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, wid, weid, user, type, start_time, end_time, description, params, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
                     type = excluded.type,
                     wid = excluded.wid,
                     weid = excluded.weid,
+                    user = excluded.user,
                     start_time = excluded.start_time,
                     end_time = excluded.end_time,
                     description = excluded.description,
@@ -113,6 +115,7 @@ class Repository(object):
                     ex.id,
                     ex.wid,
                     ex.weid,
+                    ex.user,
                     ex.type,
                     ex.start_time,
                     ex.end_time,
@@ -185,6 +188,25 @@ class Repository(object):
         with self._connect() as connection:
             return self.__upsert_run_artifact(connection, a)
 
+    def upsert_user(self, u: User) -> int:
+        """
+        Update a user
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO users (name, alias, email)
+                VALUES (?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    alias = excluded.alias,
+                    email = excluded.email
+                RETURNING name
+                """,
+                (u.name, u.alias, u.email),
+            )
+            row = cursor.fetchone()[0]
+        return row
+
     def get_wds(self) -> list[int]:
         """
         Get a list of all working directories
@@ -214,7 +236,7 @@ class Repository(object):
         with self._connect() as connection:
             cursor = connection.execute(
                 """
-                SELECT wid, weid, type, end_time, start_time, description, params, status, mark FROM experiments WHERE id = ?
+                SELECT wid, weid, user, type, end_time, start_time, description, params, status, mark FROM experiments WHERE id = ?
                 """,
                 (eid,),
             )
@@ -225,14 +247,15 @@ class Repository(object):
                 id=eid,
                 wid=row[0],
                 weid=row[1],
-                type=row[2],
-                end_time=row[3],
-                start_time=row[4],
-                description=row[5],
-                params=row[6],
-                status=row[7],
+                user=row[2],
+                type=row[3],
+                end_time=row[4],
+                start_time=row[5],
+                description=row[6],
+                params=row[7],
+                status=row[8],
                 results=[],
-                mark=row[8],
+                mark=row[9],
             )
         return experiment
 
@@ -453,7 +476,23 @@ class Repository(object):
                 results.append(self.get_experiment_result(rid))
         return results
 
+    def get_user(self, name: str) -> User:
+        """
+        Get a user from their name
+        """
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "SELECT alias, email FROM users WHERE name=?", (name,)
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError(f"Can not get user with name {name}.")
+            return User(name, row[0], row[1])
+
     def _connect(self) -> sqlite3.Connection:
+        if self.db_path is None:
+            raise RuntimeError("Trying to connect to NONE")
+        print(f"DEBUG: DB PATH = {self.db_path}")
         connection = sqlite3.connect(self.db_path)
         _ = connection.execute("PRAGMA foreign_keys = ON")
         return connection
@@ -475,7 +514,8 @@ class Repository(object):
                 CREATE TABLE IF NOT EXISTS experiments (
                     id          INTEGER PRIMARY KEY,
                     wid         INTEGER,
-                    weid         INTEGER,
+                    weid        INTEGER,
+                    user        TEXT NOT NULL,
                     type TEXT NOT NULL,
                     end_time    FLOAT,
                     start_time  FLOAT,
@@ -485,6 +525,7 @@ class Repository(object):
                     status      TEXT NOT NULL CHECK (status in ('INIT', 'RUNNING', 'FAILED', 'SUCCESS')),
                     FOREIGN KEY (wid) REFERENCES working_directories(id)
                     FOREIGN KEY (weid) REFERENCES working_directory_envs(id)
+                    FOREIGN KEY (user) REFERENCES users(name)
                 )
                 """)
             if cursor.lastrowid is None:
@@ -559,6 +600,15 @@ class Repository(object):
                     "Can not create working directory configs table"
                 )
             cursor = connection.execute("""
+                CREATE TABLE IF NOT EXISTS users(
+                    name            TEXT PRIMARY KEY,
+                    alias           TEXT NOT NULL,
+                    email           TEXT NOT NULL
+                )
+                """)
+            if cursor.lastrowid is None:
+                raise RuntimeError("Can not create user table")
+            cursor = connection.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS unique_local_directory
                 ON working_directories(path)
                 WHERE ssh_alias IS NULL
@@ -570,6 +620,14 @@ class Repository(object):
                 ON working_directories(ssh_alias, path)
                 WHERE ssh_alias IS NOT NULL
                 """)
+            if cursor.lastrowid is None:
+                raise RuntimeError("Can not create unique index for remote")
+            cursor = connection.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS unique_alias
+                ON users(alias)
+                """)
+            if cursor.lastrowid is None:
+                raise RuntimeError("Can not create unique index for user alias")
             for operation in ("UPDATE", "DELETE"):
                 cursor = connection.execute(f"""
                     CREATE TRIGGER IF NOT EXISTS prevent_config_{operation.lower()}

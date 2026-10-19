@@ -10,6 +10,7 @@ from nemesis.domain import (
     ExperimentResult,
     Run,
     RunArtifact,
+    User,
     WorkingDirectory,
     WorkingDirectoryEnv,
 )
@@ -57,6 +58,7 @@ class Api(object):
         description: str,
         params: list[str],
         parameter_types: dict[str, type],
+        user: User,
         polling: float = 1.0,
     ):
         self._rep: Repository = repository
@@ -64,6 +66,7 @@ class Api(object):
         self._exp_type: str = exp_type
         self._param_strs: list[str] = params
         self._param_types: dict[str, type] = parameter_types
+        self._user: User = user
         self._polling: float = polling
         self._runs: list[Run] = []
         self._result_run_data: list[ResultData] = []
@@ -399,6 +402,7 @@ class Api(object):
         """
         experiment: Experiment = Experiment(
             None,
+            self._user.alias,
             self._wid,
             self._weid,
             self._exp_type,

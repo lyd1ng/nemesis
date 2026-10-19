@@ -7,7 +7,7 @@ Author: Lyding Anrie Brumm.
 
 from nemesis.constants import VERSION
 from nemesis.repository import Repository
-from nemesis.domain import ExperimentTemplate, WorkingDirectoryEnv
+from nemesis.domain import ExperimentTemplate, User, WorkingDirectoryEnv
 from nemesis.experiment_module import ExperimentModule
 from nemesis.api import Api
 from nemesis.sandbox_api import SandboxApi
@@ -66,6 +66,7 @@ def experiment_list(rep: Repository) -> int:
 def experiment_run(
     wid: int,
     type: str,
+    unix_name: str,
     description: str,
     params: list[str],
     experiment_description_path: Path,
@@ -83,8 +84,8 @@ def experiment_run(
     )
     if ed.hash != _hash:
         raise RuntimeError("Detected post-registration tempering")
-    # The whole API is defined within the ExperimentContext,
-    api = Api(rep, wid, type, description, params, em.parameters)
+    user: User = rep.get_user(unix_name)
+    api = Api(rep, wid, type, description, params, em.parameters, user)
     # For all the logic happens in the module and here simply
     # all three hooks are invoked
     em.setup(api)

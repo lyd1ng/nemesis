@@ -61,6 +61,7 @@ class Experiment:
     """
 
     id: int | None
+    user: str
     wid: int
     weid: int
     type: str
@@ -130,3 +131,14 @@ class Run:
     ) = "INIT"
     dependencies: list[int] = field(default_factory=list)
     artifacts: list[RunArtifact] = field(default_factory=list)
+
+
+@dataclass
+class User:
+    """
+    The python representation of a nemesis user and their configuration
+    """
+
+    name: str
+    alias: str
+    email: str

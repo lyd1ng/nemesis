@@ -7,7 +7,7 @@ Author: Lyding Anrie Brumm.
 
 from typing import cast
 
-from nemesis.domain import Experiment, ExperimentResult, WorkingDirectory, WorkingDirectoryEnv
+from nemesis.domain import Experiment, ExperimentResult, User, WorkingDirectory, WorkingDirectoryEnv
 from nemesis.repository import Repository
 from nemesis.text_formatting import TextFormatter
 
@@ -19,6 +19,7 @@ def show_experiment(
 ):
     tf: TextFormatter = TextFormatter()
     e: Experiment = repository.get_experiment(eid)
+    u: User = repository.get_user(e.user)
     wd: WorkingDirectory = repository.get_working_directory(e.wid)
     results: list[ExperimentResult] = repository.get_experiment_results(
         cast(int, e.id)
@@ -29,6 +30,7 @@ def show_experiment(
         _cond_print_var("Type", e.type, fields, tf)
         _cond_print_var("ID", e.id, fields, tf)
         _cond_print_var("Desc", e.description, fields, tf)
+        _cond_print_var("User", u.alias, fields, tf)
         _cond_print_var(
             "Params", e.params if e.params != "" else "NONE", fields, tf
         )
@@ -84,13 +86,30 @@ def show_wd(wid: int, show_history: bool, repository: Repository):
                     tf.print_var("Hash", wdes[-1].hash)
 
 
+def show_user(name: str, rep: Repository):
+    """
+    Show all informations about a user
+    """
+    user: User = rep.get_user(name)
+    tf: TextFormatter = TextFormatter()
+    with tf.start_block(f"User {name} alias {user.alias}", padding=5):
+        tf.print_var("Name", user.name)
+        tf.print_var("Alias", user.alias)
+        tf.print_var("Email", user.email)
+
+
 def _cond_print_var(
-    name: str, value: object, fields: list[str], tf: TextFormatter
+    var_name: str,
+    value: object,
+    fields: list[str],
+    tf: TextFormatter,
+    field_name: str | None = None,
 ):
     """
     Only print a variable if the name is element of fields,
     but if the list of fields is empty print it nonetheless.
     """
+    name = var_name if field_name is None else field_name
     if len(fields) == 0 or name.lower() in list(
         map(lambda s: s.lower(), fields)
     ):
