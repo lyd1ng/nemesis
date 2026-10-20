@@ -1,5 +1,11 @@
 """
-Implements the API exposed to experiment descriptions files
+Implements the ExperimentModule.
+The ExperimentModule class is the main object of experiment definition files.
+Through the ExperimentModule class the user specifies not only
+necessary informations about the class of experiments to register,
+like name, description as well as the parameters of the experiment,
+but also the callback functions which are invoked by nemesis
+if an experiment is conducted.
 
 Date:   20261007
 Author: Lyding Anrie Brumm.

@@ -7,8 +7,31 @@ Author: Lyding Anrie Brumm.
 """
 
 from datetime import datetime
+from types import TracebackType
 
 WHITE_SPACE = "  "
+
+
+class HeadingSymbol(object):
+    """
+    Defines Heading symbols used for text formatting.
+    For the first three level the characters
+        =, ~, -
+    are used otherwise ".".
+    """
+
+    def __init__(self):
+        self.headings: list[str] = ["=", "~", "-"]
+        pass
+
+    def __getitem__(self, index: int):
+        """
+        For the first three levels individual characters are
+        defined. For all further levels of indentation the same
+        charachter "." is used
+        """
+        assert index > 0, "Negative heading index"
+        return self.headings[index] if index < 3 else "."
 
 
 class TextFormatter(object):
@@ -18,7 +41,9 @@ class TextFormatter(object):
 
     def __init__(self):
         self.current_level: int = 0
-        self.underlines: list[str] = ["=", "~", "-", ".", ".", "."]
+        self.underlines: HeadingSymbol = HeadingSymbol()
+        # Each new level of indentation or "block" can have its own
+        # padding value to which the variable names will be padded
         self.padding: list[int] = []
 
     def start_block(
@@ -54,12 +79,16 @@ class TextFormatter(object):
         """
         Print a multi-line string with the right level of indentation.
         """
+        # The newlines are extended by the correct prefix, this
+        # way the user can specify a regular multi-line string
+        # and do not care at all about the indentation level.
         new_s = s.replace("\n", "\n" + WHITE_SPACE * self.current_level)
         print(WHITE_SPACE * self.current_level + new_s)
 
     def print_var(self, name: str, value: object) -> None:
         """
-        Print a string with the right level of indentation
+        Print a variable with the right level of indentation and the
+        variable name padded.
         """
         diff = self.padding[-1] - len(name) if self.padding[-1] > 0 else 0
         if diff < 0:
@@ -96,5 +125,10 @@ class TextFormatter(object):
         # the indentation in the python code as well
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exception_type_: type[BaseException] | None,
+        exception_value: BaseException | None,
+        exception_traceback: TracebackType | None,
+    ):
         self.end_block()

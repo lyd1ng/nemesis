@@ -40,6 +40,13 @@ from concurrent.futures import (
 
 @dataclass
 class ResultData:
+    """
+    The ResultData class is used before the experiment is conducted
+    to mark expected run artifacts as experiment results.
+    In the postconduct phase the result is used to lift result artifacts
+    to experiment results.
+    """
+
     run_index: int
     description: str
     path: Path
@@ -314,14 +321,13 @@ class Api(object):
         with ThreadPoolExecutor() as executor:
             active: dict[Future[int], Run] = {}
             while True:
-                # Schedule all currently ready runs.
+                # The "INIT" status marks runs which are ready for invocation.
                 init_runs = list(
                     filter(lambda x: x.status == "INIT", self._runs)
                 )
                 for r in init_runs:
-                    invocation = self._get_invocation(r)
                     r.start_time = time.time()
-                    r.invocation = invocation
+                    r.invocation = self._get_invocation(r)
                     r.status = "RUNNING"
                     _ = self._rep.upsert_run(r)
                     active[
@@ -345,9 +351,15 @@ class Api(object):
                         else "FAILED"
                     )
                     _ = self._rep.upsert_run(r)
+                # Now with the one or more finished runs
+                # their state (SUCCESS or FAILED) must be propagated through
+                # all jobs depending on the freshly finished jobs.
                 dirty_run_ids = self._update_status()
                 for i in dirty_run_ids:
                     _ = self._rep.upsert_run(self._runs[i])
+                # If there is no more run left which is either ready to run,
+                # waiting or already running, the experiment is conducted
+                # succesfully of failed.
                 if (
                     len(
                         list(
@@ -364,8 +376,7 @@ class Api(object):
 
     def _postconduct(self):
         """
-        Set the experiment status.
-        Add experiment results.
+        Set the experiment status and add experiment results.
         """
 
         self._experiment.status = (
@@ -376,7 +387,8 @@ class Api(object):
         if self._experiment.status == "SUCCESS":
             self._experiment.end_time = time.time()
             # If the experiment succeeded all runs succeeded as well, i.e.
-            # all expected output files are present as well.
+            # all expected output files are present as well
+            # and experiment results can be created
             for result_run in self._result_run_data:
                 self._experiment.results.append(
                     ExperimentResult(
@@ -390,7 +402,6 @@ class Api(object):
                         ),
                     )
                 )
-            print()
         else:
             # If the experiment did not succeed no results are added
             pass
@@ -406,8 +417,8 @@ class Api(object):
             self._wid,
             self._weid,
             self._exp_type,
-            0,
-            0,
+            0,  # Empty start time
+            0,  # Empty end time
             description,
             reduce(lambda a, b: a + " " + b, self._param_strs, ""),
         )
@@ -444,13 +455,16 @@ class Api(object):
     def _catch_artifacts(self, run: Run) -> bool:
         """
         Computes the hash of all artifacts.
-        If an artifact is missing False is returned
+        If an artifact is missing, False is returned
         s.t. the status of the Run can be set to FAILED.
 
         For unconfined runs the assets are also copied to
         the corresponding nemesis->experiment->run path
         """
         success = True
+
+        # Choose different exists and calculate_hash functions depending
+        # on the mode of the run
         exists = (
             fs.confined_path_exists
             if run.mode == "CONFINED"

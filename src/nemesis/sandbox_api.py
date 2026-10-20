@@ -1,5 +1,6 @@
 """
-Implements the API exposed to experiment descriptions files
+Implements a sandbox API which is used solely to check experiment modules
+for sanity.
 
 Date:   20261015
 Author: Lyding Anrie Brumm.
@@ -16,6 +17,8 @@ from datetime import date, datetime, time, timezone
 
 from nemesis.utility import RunOptionsU
 
+# The dummy values are used whenever the experiment module
+# requires a variable from the environment, or parameters.
 DUMMY_VALUES: dict[type, object] = {
     str: "dummy",
     int: 1,
@@ -32,6 +35,8 @@ class SandboxApi(object):
     Defines a sandboxed version of the API, which does not make any
     changes to the database but is used to perform sanity checks on
     the experiment description.
+
+    The functions have to have the same signatures as proper API.
     """
 
     def __init__(
@@ -98,6 +103,10 @@ class SandboxApi(object):
         description: str,  # pyright: ignore[reportUnusedParameter]
         path: Path,  # pyright: ignore[reportUnusedParameter]
     ) -> None:
+        """
+        Checks if the result which is to be marked as a result belongs
+        to a run no other run depends on.
+        """
         joint_dependency_list: list[int] = reduce(
             lambda a, b: a + b, [run[1] for run in self._runs]
         )
@@ -125,7 +134,7 @@ class SandboxApi(object):
         **kwargs: Unpack[RunOptionsU],  # pyright: ignore[reportUnusedParameter]
     ) -> int:
         """
-        Generate a node for each run
+        Add a node to the dependency tree for later analysis
         """
         rid = len(self._runs)
         self._runs.append((rid, dependencies))

@@ -36,7 +36,10 @@ class Repository(object):
         if db_path != Path(""):
             self._initialize()
 
-    def add_experiment_template(self, ed: ExperimentTemplate):
+    def add_experiment_template(self, ed: ExperimentTemplate) -> int:
+        """
+        Add an experiment template
+        """
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -51,7 +54,7 @@ class Repository(object):
             raise RuntimeError("Can not create experiment template")
         return cursor.lastrowid
 
-    def add_working_directory(self, working_directory: WorkingDirectory):
+    def add_working_directory(self, working_directory: WorkingDirectory) -> int:
         """
         Add a new working directory to the db
         """
@@ -89,7 +92,7 @@ class Repository(object):
                 raise RuntimeError("Can not add working directory config")
             return cursor.lastrowid
 
-    def upsert_experiment(self, ex: Experiment):
+    def upsert_experiment(self, ex: Experiment) -> int:
         """
         Add an experiment to the database
         """
@@ -188,7 +191,7 @@ class Repository(object):
         with self._connect() as connection:
             return self.__upsert_run_artifact(connection, a)
 
-    def upsert_user(self, u: User) -> int:
+    def upsert_user(self, u: User) -> str:
         """
         Update a user
         """
@@ -204,8 +207,8 @@ class Repository(object):
                 """,
                 (u.name, u.alias, u.email),
             )
-            row = cursor.fetchone()[0]
-        return row
+            name = cursor.fetchone()[0]
+        return name
 
     def get_wds(self) -> list[int]:
         """
@@ -264,6 +267,12 @@ class Repository(object):
     ) -> list[int]:
         """
         Get experiment ids subject to various filters
+
+        The filters have to be of the form
+            (field_name, operator, value)
+
+        If more than one filter is specified the resulting condtitions
+        are concatenated with a logical 'and'.
         """
         prefix = "SELECT id from experiments tables WHERE "
         query = reduce(
@@ -340,6 +349,9 @@ class Repository(object):
         )
 
     def get_list_of_experiment_names(self) -> list[str]:
+        """
+        Get list of experiment names
+        """
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -350,7 +362,7 @@ class Repository(object):
 
     def get_run(self, run_id: int) -> Run:
         """
-        Get an run object from an id
+        Get an run object from its rid
         """
         with self._connect() as connection:
             cursor = connection.execute(
@@ -382,6 +394,9 @@ class Repository(object):
         return run
 
     def get_experiment_description(self, name: str) -> ExperimentTemplate:
+        """
+        Get an experiment description from its name
+        """
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -490,13 +505,20 @@ class Repository(object):
             return User(name, row[0], row[1])
 
     def _connect(self) -> sqlite3.Connection:
-        if self.db_path is None:
-            raise RuntimeError("Trying to connect to NONE")
+        if self.db_path == Path(""):
+            raise RuntimeError(
+                "Trying to connect to uninitialised db (db_path='')"
+            )
         connection = sqlite3.connect(self.db_path)
         _ = connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
     def _initialize(self) -> None:
+        """
+        Initialize the database. See
+            docs/database_description.md
+        for further informations.
+        """
         with self._connect() as connection:
             cursor = connection.execute("""
                 CREATE TABLE IF NOT EXISTS experiment_templates (
@@ -522,8 +544,8 @@ class Repository(object):
                     params      TEXT,
                     mark        TEXT,
                     status      TEXT NOT NULL CHECK (status in ('INIT', 'RUNNING', 'FAILED', 'SUCCESS')),
-                    FOREIGN KEY (wid) REFERENCES working_directories(id)
-                    FOREIGN KEY (weid) REFERENCES working_directory_envs(id)
+                    FOREIGN KEY (wid) REFERENCES working_directories(id),
+                    FOREIGN KEY (weid) REFERENCES working_directory_envs(id),
                     FOREIGN KEY (user) REFERENCES users(name)
                 )
                 """)
@@ -640,7 +662,7 @@ class Repository(object):
         self, connection: sqlite3.Connection, a: RunArtifact
     ) -> int:
         """
-        Update run artifact
+        Upsert run artifact
         """
         cursor = connection.execute(
             """
